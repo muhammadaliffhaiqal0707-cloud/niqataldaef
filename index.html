@@ -6,6 +6,10 @@
     <title>NIQAT Al-Daef - Security Scanner</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- NEW: Load html2pdf.js for generating reports -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
     <!-- Configure Tailwind to use custom colors -->
     <script>
         tailwind.config = {
@@ -32,6 +36,7 @@
             min-height: 100vh;
             color: white;
             font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
         }
         /* Custom gradient for the primary CTA buttons */
         .cta-gradient {
@@ -57,8 +62,37 @@
         .overflow-y-auto-max {
             max-height: calc(100vh - 12rem); /* Adjust based on header/footer size */
         }
+
+        /* Abstract Animated Pattern for Homepage */
+        @keyframes flowPattern {
+            0% { background-position: 0% 0%; }
+            100% { background-position: 100% 100%; }
+        }
+        .abstract-pattern {
+            /* Subtle gradients mimicking network nodes or data flow */
+            background-image: radial-gradient(circle at 100% 100%, #8e24aa44 0%, transparent 70%),
+                              radial-gradient(circle at 0% 0%, #00bcd444 0%, transparent 70%);
+            background-size: 200% 200%;
+            animation: flowPattern 60s linear infinite alternate;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1; /* Place below content */
+            opacity: 0.3;
+        }
+
+        /* Page Transition Effect */
+        .page-content-transition {
+            opacity: 0;
+            transform: translateY(20px);
+            animation: pageFadeIn 0.5s forwards;
+        }
+        @keyframes pageFadeIn {
+            to { opacity: 1; transform: translateY(0); }
+        }
     </style>
-    <!-- Font for icons (using inline SVG for simplicity, but can be replaced by Lucide or similar) -->
 </head>
 <body class="p-4 md:p-8">
 
@@ -69,7 +103,6 @@
     <script>
         // --- Application State ---
         let state = {
-            // Updated to include static pages (services, about_us, contact)
             currentPage: 'url', // 'url', 'configure', 'scanning', 'report', 'services', 'about_us', 'contact'
             urlInput: '',
             urlStatus: 'idle', // 'idle', 'valid', 'invalid'
@@ -151,14 +184,62 @@
          * @param {string} page - The page key ('url', 'configure', 'scanning', 'report', 'services', 'about_us', 'contact').
          */
         function navigateTo(page) {
-            setState({ currentPage: page });
+            // Re-render the app to trigger the content transition effect
+            const app = document.getElementById('app');
+            if (app) {
+                // Force content to fade out before setting new content
+                const mainContent = app.querySelector('main');
+                if (mainContent) {
+                    mainContent.classList.remove('page-content-transition');
+                }
+            }
+            
+            // Wait briefly to allow the visual fade-out before setting new state
+            setTimeout(() => {
+                setState({ currentPage: page });
+            }, 50); 
         }
+        
+        /**
+         * Generates and downloads the current report content as a PDF.
+         */
+        function downloadReportPdf() {
+            const element = document.getElementById('report-content');
+            
+            if (!element) {
+                console.error("Report content element not found.");
+                return;
+            }
+
+            // Temporarily hide buttons and navigation elements for cleaner PDF capture
+            const buttons = document.querySelectorAll('.hide-on-pdf');
+            buttons.forEach(btn => btn.style.display = 'none');
+            
+            // Configuration for the PDF generation
+            const opt = {
+                margin: 1,
+                filename: `Security_Report_${state.reportData.targetUrl.replace(/[^a-z0-9]/gi, '_')}.pdf`,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2, logging: false, dpi: 192, letterRendering: true },
+                jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
+            };
+
+            // Use html2pdf to generate and save the file
+            html2pdf().set(opt).from(element).save().then(() => {
+                // Restore buttons after PDF generation is complete
+                buttons.forEach(btn => btn.style.display = 'flex'); 
+            }).catch(error => {
+                console.error("PDF generation failed:", error);
+                // Ensure buttons are restored even on failure
+                buttons.forEach(btn => btn.style.display = 'flex');
+            });
+        }
+
 
         /**
          * Renders the header and navigation bar.
          */
         function renderHeader() {
-            // Only show scanning steps if we are in the main workflow
             const isMainWorkflow = ['url', 'configure', 'scanning', 'report'].includes(state.currentPage);
 
             const steps = [
@@ -169,14 +250,12 @@
             ];
 
             return `
-                <nav class="flex justify-between items-center py-4 mb-8">
+                <nav class="flex justify-between items-center py-4 mb-8 relative z-20">
                     <div class="flex items-center space-x-2 text-xl font-bold">
                         <svg class="w-6 h-6 text-accent-pink" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        <!-- Company Name: Aliff Tech Sdn Bhd -->
                         <span>Aliff Tech Sdn Bhd</span>
                     </div>
                     <div class="hidden md:flex space-x-6 text-sm text-gray-300">
-                        <!-- Header Buttons: Now navigates using JS -->
                         <button onclick="navigateTo('url')" class="hover:text-accent-cyan transition duration-200 ${state.currentPage === 'url' ? 'text-accent-cyan' : ''}">Home</button>
                         <button onclick="navigateTo('services')" class="hover:text-accent-cyan transition duration-200 ${state.currentPage === 'services' ? 'text-accent-cyan' : ''}">Services</button>
                         <button onclick="navigateTo('about_us')" class="hover:text-accent-cyan transition duration-200 ${state.currentPage === 'about_us' ? 'text-accent-cyan' : ''}">About Us</button>
@@ -189,7 +268,7 @@
 
                 <!-- Progress Bar / Stepper: Only shown in the main scanning workflow -->
                 ${isMainWorkflow ? `
-                    <div class="flex justify-between items-center bg-bg-card p-2 rounded-xl shadow-lg mb-12 border border-accent-purple/50">
+                    <div class="flex justify-between items-center bg-bg-card p-2 rounded-xl shadow-lg mb-12 border border-accent-purple/50 relative z-20">
                         ${steps.map(step => `
                             <div class="flex-1 text-center">
                                 <button onclick="navigateTo('${step.key}')" 
@@ -206,8 +285,6 @@
         }
 
         // --- Page Renderers ---
-
-        // Render function for the 'Service' page
         function renderServicesPage() {
             const modules = [
                 { 
@@ -225,7 +302,7 @@
             ];
 
             return `
-                <div class="max-w-4xl mx-auto p-6 bg-bg-card rounded-xl shadow-2xl border border-accent-cyan/50">
+                <div class="max-w-4xl mx-auto p-6 bg-bg-card rounded-xl shadow-2xl border border-accent-cyan/50 relative z-20">
                     <h1 class="text-4xl md:text-5xl font-extrabold mb-6 text-accent-cyan">OUR SERVICES</h1>
                     <p class="text-lg text-gray-300 mb-8">
                         NIQAT Al-Daef is a web security scanning tool designed to identify critical weaknesses in your web applications. Our focus is on providing clear reports and actionable recommendations.
@@ -248,10 +325,9 @@
             `;
         }
         
-        // Render function for the 'About Us' page
         function renderAboutUsPage() {
             return `
-                <div class="max-w-4xl mx-auto p-6 bg-bg-card rounded-xl shadow-2xl border border-accent-purple/50 text-center">
+                <div class="max-w-4xl mx-auto p-6 bg-bg-card rounded-xl shadow-2xl border border-accent-purple/50 text-center relative z-20">
                     <h1 class="text-4xl md:text-5xl font-extrabold mb-6 text-accent-cyan">ABOUT US</h1>
                     <div class="bg-gray-900/50 p-6 rounded-lg">
                         <h2 class="text-3xl font-bold mb-4 text-accent-pink">Aliff Tech Sdn Bhd</h2>
@@ -271,10 +347,9 @@
             `;
         }
 
-        // Render function for the 'Contact' page
         function renderContactPage() {
             return `
-                <div class="max-w-4xl mx-auto p-6 bg-bg-card rounded-xl shadow-2xl border border-accent-pink/50 text-center">
+                <div class="max-w-4xl mx-auto p-6 bg-bg-card rounded-xl shadow-2xl border border-accent-pink/50 text-center relative z-20">
                     <h1 class="text-4xl md:text-5xl font-extrabold mb-6 text-accent-cyan">CONTACT US</h1>
                     
                     <div class="space-y-6">
@@ -316,41 +391,28 @@
             const isValid = state.urlStatus === 'valid';
             const isInvalid = state.urlStatus === 'invalid';
 
-            const handleUrlChange = (event) => {
-                state.urlInput = event.target.value;
-                state.urlStatus = 'idle'; // Reset status on new input
-                renderApp();
-            };
-
-            const handleScanUrl = () => {
-                // Simple validation check (must contain '://' and a dot)
-                const url = state.urlInput.trim();
-                const isValidFormat = url.length > 5 && url.includes('.') && url.includes('://');
-
-                if (isValidFormat) {
-                    // Simulate a successful connection check
-                    setState({ urlStatus: 'valid' });
-                    setTimeout(() => navigateTo('configure'), 500); // Move to next step after a short delay
-                } else if (url.length === 0) {
-                    setState({ urlStatus: 'idle' });
-                } else {
-                    // Simulate connection failure
-                    setState({ urlStatus: 'invalid' });
-                }
-            };
-
             return `
-                <div class="text-center md:text-left">
-                    <h1 class="text-4xl md:text-5xl font-extrabold mb-8">ENTER TARGET URL</h1>
-                    <div class="max-w-xl mx-auto md:mx-0">
+                <!-- Abstract Pattern Layer for visual interest (like an Apple background) -->
+                <div class="abstract-pattern"></div>
+                
+                <div class="text-center md:text-left relative z-20">
+                    <h1 class="text-5xl md:text-7xl font-extrabold mb-4 leading-tight">
+                        <span class="block text-accent-cyan">NIQAT Al-Daef</span>
+                        <span class="block text-white text-4xl md:text-6xl mt-2">Web Security Scanner</span>
+                    </h1>
+                    <p class="text-xl text-gray-300 mb-10 max-w-xl mx-auto md:mx-0">
+                        Uncover vulnerabilities, fortify your defense. Start your professional security scan now.
+                    </p>
+                    
+                    <div class="max-w-xl mx-auto md:mx-0 bg-bg-card/70 p-6 rounded-2xl shadow-2xl backdrop-blur-sm border border-accent-cyan/20">
                         <div class="relative flex items-center mb-6">
                             <input
                                 id="url-input"
                                 type="url"
-                                placeholder="https://example.com"
+                                placeholder="https://secure-website.com"
                                 value="${state.urlInput}"
                                 oninput="handleUrlChange(event)"
-                                class="w-full p-4 pl-12 rounded-xl bg-bg-card text-white text-lg focus:ring-4 focus:ring-accent-cyan focus:outline-none transition duration-300 ${isInvalid ? 'border-2 border-red-500' : 'border border-gray-600'}"
+                                class="w-full p-4 pl-12 rounded-xl bg-gray-800 text-white text-lg focus:ring-4 focus:ring-accent-cyan focus:outline-none transition duration-300 ${isInvalid ? 'border-2 border-red-500' : 'border border-gray-600'}"
                             >
                             <svg class="absolute left-3 w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5a2.5 2.5 0 00.727 1.773L13 12l-4.273 4.727A2.5 2.5 0 008 17.5v1.565M6 18H4a2 2 0 01-2-2v-1a2 2 0 00-2-2 2 2 0 01-2-2V7.055"></path></svg>
                         </div>
@@ -391,8 +453,8 @@
                     scanLog: [], 
                     scanProgress: 0,
                     reportData: null, // Reset previous report
+                    currentPage: 'scanning', // Navigate immediately
                 });
-                navigateTo('scanning');
                 // Start the simulation
                 setTimeout(simulateScan, 500);
             };
@@ -416,15 +478,15 @@
                                 <label class="relative inline-flex items-center cursor-pointer">
                                     <input type="checkbox" 
                                         ${state.scanModules[module.key] ? 'checked' : ''}
-                                        onchange="toggleModule('${module.key}')" 
+                                        onchange="window.toggleModule('${module.key}')" 
                                         class="sr-only peer">
-                                    <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-accent-cyan/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent-pink"></div>
+                                    <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-accent-cyan/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white peer-checked:after:bg-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent-pink"></div>
                                 </label>
                             </div>
                         `).join('')}
 
                         <div class="pt-6">
-                            <button onclick="startScan()" class="w-full cta-gradient text-white font-bold py-4 rounded-xl shadow-lg text-xl transition duration-200">
+                            <button onclick="window.startScan()" class="w-full cta-gradient text-white font-bold py-4 rounded-xl shadow-lg text-xl transition duration-200">
                                 START SCAN
                             </button>
                         </div>
@@ -434,7 +496,7 @@
         }
 
         function renderScanningPage() {
-            const { scanProgress, scanLog, targetUrl } = state;
+            const { scanProgress, scanLog } = state;
             const logHTML = scanLog.map(log => {
                 let icon, color;
                 if (log.includes('Detected') || log.includes('found')) {
@@ -506,53 +568,58 @@
             `).join('');
 
             return `
-                <h1 class="text-4xl md:text-5xl font-extrabold mb-8 text-accent-cyan">SCAN REPORT</h1>
+                <div id="report-content"> <!-- PDF TARGET WRAPPER -->
+                    <h1 class="text-4xl md:text-5xl font-extrabold mb-8 text-accent-cyan">SCAN REPORT</h1>
 
-                <!-- General Info & Summary -->
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
-                    <!-- General Info Card -->
-                    <div class="bg-bg-card p-6 rounded-xl shadow-2xl border-t-4 border-accent-pink lg:col-span-1">
-                        <h2 class="text-xl font-bold mb-4 text-white">General Information</h2>
-                        <p class="text-gray-300"><strong class="text-white">Target URL:</strong> ${data.targetUrl}</p>
-                        <p class="text-gray-300"><strong class="text-white">Scan Date:</strong> ${data.scanDate}</p>
-                        <p class="text-gray-300"><strong class="text-white">Scan Time:</strong> ${data.scanTime}</p>
-                        <p class="text-gray-300 mt-4 text-sm italic">Tool Version: Niqat Al-Daef v1.1</p>
-                    </div>
+                    <!-- General Info & Summary -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
+                        <!-- General Info Card -->
+                        <div class="bg-bg-card p-6 rounded-xl shadow-2xl border-t-4 border-accent-pink lg:col-span-1">
+                            <h2 class="text-xl font-bold mb-4 text-white">General Information</h2>
+                            <p class="text-gray-300"><strong class="text-white">Target URL:</strong> ${data.targetUrl}</p>
+                            <p class="text-gray-300"><strong class="text-white">Scan Date:</strong> ${data.scanDate}</p>
+                            <p class="text-gray-300"><strong class="text-white">Scan Time:</strong> ${data.scanTime}</p>
+                            <p class="text-gray-300 mt-4 text-sm italic">Tool Version: Niqat Al-Daef v1.1</p>
+                        </div>
 
-                    <!-- Summary Card -->
-                    <div class="bg-bg-card p-6 rounded-xl shadow-2xl border-t-4 border-accent-cyan lg:col-span-2">
-                        <h2 class="text-xl font-bold mb-4 text-white">Summary of Findings</h2>
-                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-                            ${[
-                                { label: 'Total Findings', value: data.summary.total, color: 'text-accent-pink' },
-                                { label: 'High Severity', value: data.summary.high, color: 'text-red-500' },
-                                { label: 'Medium Severity', value: data.summary.medium, color: 'text-orange-500' },
-                                { label: 'Low Severity', value: data.summary.low, color: 'text-green-500' },
-                            ].map(item => `
-                                <div class="p-3 bg-gray-900 rounded-lg">
-                                    <p class="text-3xl font-extrabold ${item.color}">${item.value}</p>
-                                    <p class="text-sm text-gray-400 mt-1">${item.label}</p>
-                                </div>
-                            `).join('')}
+                        <!-- Summary Card -->
+                        <div class="bg-bg-card p-6 rounded-xl shadow-2xl border-t-4 border-accent-cyan lg:col-span-2">
+                            <h2 class="text-xl font-bold mb-4 text-white">Summary of Findings</h2>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                                ${[
+                                    { label: 'Total Findings', value: data.summary.total, color: 'text-accent-pink' },
+                                    { label: 'High Severity', value: data.summary.high, color: 'text-red-500' },
+                                    { label: 'Medium Severity', value: data.summary.medium, color: 'text-orange-500' },
+                                    { label: 'Low Severity', value: data.summary.low, color: 'text-green-500' },
+                                ].map(item => `
+                                    <div class="p-3 bg-gray-900 rounded-lg">
+                                        <p class="text-3xl font-extrabold ${item.color}">${item.value}</p>
+                                        <p class="text-sm text-gray-400 mt-1">${item.label}</p>
+                                    </div>
+                                `).join('')}
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <h2 class="text-3xl font-bold mb-6 mt-8 text-white">Vulnerability Details</h2>
-                
-                <!-- Findings List -->
-                <div class="lg:max-w-4xl">
-                    ${findingsHTML}
-                </div>
+                    <h2 class="text-3xl font-bold mb-6 mt-8 text-white">Vulnerability Details</h2>
+                    
+                    <!-- Findings List -->
+                    <div class="lg:max-w-4xl">
+                        ${findingsHTML}
+                    </div>
 
-                <!-- Footer Note -->
-                <div class="bg-accent-purple/30 p-4 rounded-xl text-sm italic text-center mt-12 mb-8 border border-accent-purple">
-                    🛡️ Note: This tool is for educational use only. Scan only your own apps or test environments.
-                </div>
+                    <!-- Footer Note -->
+                    <div class="bg-accent-purple/30 p-4 rounded-xl text-sm italic text-center mt-12 mb-8 border border-accent-purple">
+                        🛡️ Note: This tool is for educational use only. Scan only your own apps or test environments.
+                    </div>
+                </div> <!-- END PDF TARGET WRAPPER -->
 
-                <!-- Next Actions -->
-                <div class="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-6">
-                    <button onclick="navigateTo('url')" class="cta-gradient text-white font-bold py-3 px-8 rounded-xl shadow-lg text-lg transition duration-200">
+                <!-- Next Actions (HIDDEN ON PDF) -->
+                <div class="hide-on-pdf flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-6 mt-8">
+                    <button onclick="window.downloadReportPdf()" class="bg-accent-cyan hover:bg-accent-cyan/80 text-primary-dark font-bold py-3 px-8 rounded-xl shadow-lg text-lg transition duration-200">
+                        Download Report as PDF
+                    </button>
+                    <button onclick="window.navigateTo('url')" class="cta-gradient text-white font-bold py-3 px-8 rounded-xl shadow-lg text-lg transition duration-200">
                         Scan Another URL
                     </button>
                     <button onclick="console.log('Exiting app...')" class="bg-gray-700 text-white font-bold py-3 px-8 rounded-xl shadow-lg text-lg hover:bg-gray-600 transition duration-200">
@@ -570,7 +637,7 @@
             'Checking HTTP security headers...',
             'Scanning for Cross-Site Scripting (XSS)...',
             'SQL Injection vulnerability check completed.',
-            'Reflected XSS found in \'search\' parameter.',
+            'Reflected XSS found in \'search\' parameter.', // Vulnerability point
             'Missing Content-Security-Policy header detected.',
             'All scan modules completed.',
             'Generating final report...',
@@ -578,17 +645,17 @@
         ];
         
         function simulateScan() {
-            let stepIndex = 0;
             const logElement = document.getElementById('scan-log-container');
 
             const interval = setInterval(() => {
                 if (state.scanLog.length < scanSteps.length) {
-                    // Add new log entry
                     const newLog = scanSteps[state.scanLog.length];
+                    
+                    // Add new log entry
                     setState({ scanLog: [...state.scanLog, newLog] });
                     
                     // Update progress (increase linearly for simulation)
-                    const newProgress = Math.min(90, Math.floor((state.scanLog.length / scanSteps.length) * 100));
+                    const newProgress = Math.min(99, Math.floor((state.scanLog.length / scanSteps.length) * 100));
                     setState({ scanProgress: newProgress });
 
                     // Scroll to the bottom of the log container
@@ -598,6 +665,7 @@
                 } else {
                     // Simulation complete
                     clearInterval(interval);
+                    
                     setState({ 
                         scanProgress: 100, 
                         isScanning: false,
@@ -648,71 +716,68 @@
 
             app.innerHTML = `
                 ${headerHtml}
-                <main class="p-4 md:p-8 rounded-xl">
+                <main class="p-4 md:p-8 rounded-xl relative z-10 page-content-transition">
                     ${content}
                 </main>
             `;
             
-            // Re-attach event listeners after DOM update if needed
+            // Make functions available globally for inline HTML handlers
+            window.handleUrlChange = (e) => {
+                state.urlInput = e.target.value;
+                state.urlStatus = 'idle';
+            };
+            
+            window.handleScanUrl = () => {
+                const url = state.urlInput.trim();
+                const isValidFormat = url.length > 5 && url.includes('.') && url.includes('://');
+
+                if (isValidFormat) {
+                    setState({ urlStatus: 'valid' });
+                    setTimeout(() => navigateTo('configure'), 700);
+                } else if (url.length === 0) {
+                    setState({ urlStatus: 'idle' });
+                } else {
+                    setState({ urlStatus: 'invalid' });
+                }
+            };
+
+            window.toggleModule = (moduleKey) => {
+                setState({
+                    scanModules: {
+                        ...state.scanModules,
+                        [moduleKey]: !state.scanModules[moduleKey],
+                    }
+                });
+            };
+
+            window.startScan = () => {
+                if (!state.isScanning) {
+                     setState({ 
+                        isScanning: true, 
+                        scanLog: [], 
+                        scanProgress: 0,
+                        reportData: null,
+                    });
+                    setTimeout(simulateScan, 500);
+                }
+            };
+            
+            window.downloadReportPdf = downloadReportPdf;
+            
+            // Ensure handleUrlChange updates state correctly on input
             const urlInput = document.getElementById('url-input');
             if (urlInput) {
-                // Ensure the JS function handleUrlChange is accessible
-                window.handleUrlChange = (e) => {
+                urlInput.oninput = (e) => {
                     state.urlInput = e.target.value;
                     state.urlStatus = 'idle';
                 };
-                urlInput.oninput = window.handleUrlChange;
-                window.handleScanUrl = handleScanUrl;
             }
-
-            // Make state functions globally accessible for inline handlers
-            window.navigateTo = navigateTo;
-            window.toggleModule = toggleModule;
-            window.startScan = startScan;
         }
         
-        // Expose functions globally for the inline HTML handlers
-        window.handleUrlChange = (e) => {
-            state.urlInput = e.target.value;
-            state.urlStatus = 'idle';
-        };
-        window.handleScanUrl = () => {
-             // Simple validation check (must contain '://' and a dot)
-            const url = state.urlInput.trim();
-            const isValidFormat = url.length > 5 && url.includes('.') && url.includes('://');
-
-            if (isValidFormat) {
-                setState({ urlStatus: 'valid' });
-                setTimeout(() => navigateTo('configure'), 500);
-            } else if (url.length === 0) {
-                setState({ urlStatus: 'idle' });
-            } else {
-                setState({ urlStatus: 'invalid' });
-            }
-        };
-
-        window.toggleModule = (moduleKey) => {
-            setState({
-                scanModules: {
-                    ...state.scanModules,
-                    [moduleKey]: !state.scanModules[moduleKey],
-                }
-            });
-        };
-
-        window.startScan = () => {
-            setState({ 
-                isScanning: true, 
-                scanLog: [], 
-                scanProgress: 0,
-                reportData: null,
-                currentPage: 'scanning', // Navigate immediately
-            });
-            setTimeout(simulateScan, 500);
-        };
-        
-        // Initial render when the page loads
-        document.addEventListener('DOMContentLoaded', renderApp);
+        // Initial setup on load
+        document.addEventListener('DOMContentLoaded', () => {
+            renderApp();
+        });
 
     </script>
 </body>
