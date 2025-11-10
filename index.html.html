@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NIQAT Al-Daef - Security Scanner</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Configure Tailwind to use custom colors -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'primary-dark': '#1e0538',
+                        'accent-pink': '#e91e63',
+                        'accent-cyan': '#00bcd4',
+                        'accent-purple': '#8e24aa',
+                        'bg-card': '#250841',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                },
+            }
+        }
+    </script>
+    <style>
+        /* Custom background gradient for the body */
+        body {
+            background: linear-gradient(135deg, #1e0538 0%, #0c0214 100%);
+            min-height: 100vh;
+            color: white;
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom gradient for the primary CTA buttons */
+        .cta-gradient {
+            background: linear-gradient(90deg, #e91e63 0%, #f48fb1 100%);
+            transition: all 0.2s ease;
+        }
+        .cta-gradient:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 15px rgba(233, 30, 99, 0.4);
+        }
+        /* Style for the active step in the progress bar */
+        .progress-step-active {
+            background-color: #00bcd4; /* Cyan accent */
+            box-shadow: 0 0 15px rgba(0, 188, 212, 0.8);
+            color: #1e0538;
+        }
+        /* Style for vulnerability severity badges */
+        .severity-high { background-color: #f87171; }
+        .severity-medium { background-color: #fbbf24; }
+        .severity-low { background-color: #34d399; }
+        
+        /* Utility for better scrolling on mobile */
+        .overflow-y-auto-max {
+            max-height: calc(100vh - 12rem); /* Adjust based on header/footer size */
+        }
+    </style>
+    <!-- Font for icons (using inline SVG for simplicity, but can be replaced by Lucide or similar) -->
+</head>
+<body class="p-4 md:p-8">
+
+    <div id="app" class="max-w-7xl mx-auto">
+        <!-- Application content will be rendered here by JavaScript -->
+    </div>
+
+    <script>
+        // --- Application State ---
+        let state = {
+            currentPage: 'url', // 'url', 'configure', 'scanning', 'report'
+            urlInput: '',
+            urlStatus: 'idle', // 'idle', 'valid', 'invalid'
+            scanModules: {
+                sqli: true,
+                xss: true,
+                headers: true,
+            },
+            scanLog: [],
+            scanProgress: 0, // 0 to 100
+            isScanning: false,
+            reportData: null,
+        };
+
+        const MOCK_REPORT_DATA = {
+            scanDate: '19 July 2025',
+            scanTime: '3.25 seconds',
+            targetUrl: 'http://localhost/dvwa/',
+            summary: {
+                total: 3,
+                high: 1, // High is critical
+                medium: 1,
+                low: 1,
+            },
+            findings: [
+                {
+                    id: 1,
+                    title: 'SQL Injection',
+                    severity: 'High',
+                    severityColor: 'bg-red-600',
+                    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>',
+                    details: {
+                        'Affected URL': 'http://localhost/dvwa/vulnerable.php?id=1',
+                        'Parameter': 'id',
+                        'Description': 'User input is directly injected into an SQL query.',
+                        'Suggested Fix': 'Use parameterized queries (e.g., PDO or prepared statements).',
+                    }
+                },
+                {
+                    id: 2,
+                    title: 'Cross-Site Scripting (XSS)',
+                    severity: 'Medium',
+                    severityColor: 'bg-orange-500',
+                    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>',
+                    details: {
+                        'Affected URL': 'http://localhost/dvwa/comment.php?msg=<script>',
+                        'Parameter': 'msg',
+                        'Description': 'Unsanitized input is reflected on the web page.',
+                        'Suggested Fix': 'Sanitize and encode output before rendering user input.',
+                    }
+                },
+                {
+                    id: 3,
+                    title: 'Missing CSP Header',
+                    severity: 'Low',
+                    severityColor: 'bg-green-500',
+                    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944c-3.138 0-6.195 1.144-8.544 3.393M12 21c-4.418 0-8-3.582-8-8s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z"/></svg>',
+                    details: {
+                        'Description': 'Content-Security-Policy header is missing.',
+                        'Suggested Fix': 'Add CSP header to reduce XSS and data injection risks.',
+                    }
+                }
+            ],
+        };
+
+        // --- Core Functions ---
+
+        /**
+         * Updates the state and re-renders the application.
+         * @param {object} newState - Partial state object to merge with the current state.
+         */
+        function setState(newState) {
+            state = { ...state, ...newState };
+            renderApp();
+        }
+
+        /**
+         * Global navigation function.
+         * @param {string} page - The page key ('url', 'configure', 'scanning', 'report').
+         */
+        function navigateTo(page) {
+            setState({ currentPage: page });
+        }
+
+        /**
+         * Renders the header and navigation bar.
+         */
+        function renderHeader() {
+            const steps = [
+                { key: 'url', label: '1. Enter URL' },
+                { key: 'configure', label: '2. Configure Scan' },
+                { key: 'scanning', label: '3. Scanning' },
+                { key: 'report', label: '4. View Report' },
+            ];
+
+            return `
+                <nav class="flex justify-between items-center py-4 mb-8">
+                    <div class="flex items-center space-x-2 text-xl font-bold">
+                        <svg class="w-6 h-6 text-accent-pink" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        <span>Ailiff Tech Sdn Bhd</span>
+                    </div>
+                    <div class="hidden md:flex space-x-6 text-sm text-gray-300">
+                        <a href="#" class="hover:text-accent-cyan transition duration-200">Home</a>
+                        <a href="#" class="hover:text-accent-cyan transition duration-200">Service</a>
+                        <a href="#" class="hover:text-accent-cyan transition duration-200">About Us</a>
+                        <a href="#" class="hover:text-accent-cyan transition duration-200">Contact</a>
+                    </div>
+                    <button class="md:hidden text-white focus:outline-none">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
+                    </button>
+                </nav>
+
+                <!-- Progress Bar / Stepper -->
+                <div class="flex justify-between items-center bg-bg-card p-2 rounded-xl shadow-lg mb-12 border border-accent-purple/50">
+                    ${steps.map(step => `
+                        <div class="flex-1 text-center">
+                            <button onclick="navigateTo('${step.key}')" 
+                                class="w-full py-2 px-1 text-xs md:text-sm rounded-lg font-semibold transition duration-300 
+                                ${step.key === state.currentPage ? 'progress-step-active text-primary-dark' : 'text-gray-400 hover:text-white hover:bg-accent-purple/20'}">
+                                ${step.label}
+                            </button>
+                        </div>
+                        ${step.key !== 'report' ? '<div class="text-gray-600 mx-1 md:mx-2">&gt;</div>' : ''}
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        // --- Page Renderers ---
+
+        function renderEnterURLPage() {
+            const isValid = state.urlStatus === 'valid';
+            const isInvalid = state.urlStatus === 'invalid';
+
+            const handleUrlChange = (event) => {
+                state.urlInput = event.target.value;
+                state.urlStatus = 'idle'; // Reset status on new input
+                renderApp();
+            };
+
+            const handleScanUrl = () => {
+                // Simple validation check (must contain '://' and a dot)
+                const url = state.urlInput.trim();
+                const isValidFormat = url.length > 5 && url.includes('.') && url.includes('://');
+
+                if (isValidFormat) {
+                    // Simulate a successful connection check
+                    setState({ urlStatus: 'valid' });
+                    setTimeout(() => navigateTo('configure'), 500); // Move to next step after a short delay
+                } else if (url.length === 0) {
+                    setState({ urlStatus: 'idle' });
+                } else {
+                    // Simulate connection failure
+                    setState({ urlStatus: 'invalid' });
+                }
+            };
+
+            return `
+                <div class="text-center md:text-left">
+                    <h1 class="text-4xl md:text-5xl font-extrabold mb-8">ENTER TARGET URL</h1>
+                    <div class="max-w-xl mx-auto md:mx-0">
+                        <div class="relative flex items-center mb-6">
+                            <input
+                                id="url-input"
+                                type="url"
+                                placeholder="https://example.com"
+                                value="${state.urlInput}"
+                                oninput="handleUrlChange(event)"
+                                class="w-full p-4 pl-12 rounded-xl bg-bg-card text-white text-lg focus:ring-4 focus:ring-accent-cyan focus:outline-none transition duration-300 ${isInvalid ? 'border-2 border-red-500' : 'border border-gray-600'}"
+                            >
+                            <svg class="absolute left-3 w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5a2.5 2.5 0 00.727 1.773L13 12l-4.273 4.727A2.5 2.5 0 008 17.5v1.565M6 18H4a2 2 0 01-2-2v-1a2 2 0 00-2-2 2 2 0 01-2-2V7.055"></path></svg>
+                        </div>
+
+                        <button onclick="handleScanUrl()" class="w-full cta-gradient text-white font-bold py-4 rounded-xl shadow-lg text-xl mb-4 transition duration-200">
+                            SCAN URL
+                        </button>
+
+                        <div class="min-h-[2rem] mt-4 flex items-center justify-center md:justify-start space-x-2 text-lg font-medium">
+                            ${isValid ? `
+                                <svg class="w-6 h-6 text-accent-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                                <span class="text-accent-cyan">URL is valid and reachable</span>
+                            ` : ''}
+                            ${isInvalid ? `
+                                <svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                <span class="text-red-500">Unable to reach the URL. Check address and try again.</span>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderConfigureScanPage() {
+            const toggleModule = (moduleKey) => {
+                setState({
+                    scanModules: {
+                        ...state.scanModules,
+                        [moduleKey]: !state.scanModules[moduleKey],
+                    }
+                });
+            };
+
+            const startScan = () => {
+                // Prepare the scan log and navigate to the scanning page
+                setState({ 
+                    isScanning: true, 
+                    scanLog: [], 
+                    scanProgress: 0,
+                    reportData: null, // Reset previous report
+                });
+                navigateTo('scanning');
+                // Start the simulation
+                setTimeout(simulateScan, 500);
+            };
+
+            const modules = [
+                { key: 'sqli', title: 'SQL Injection (SQLi)', description: 'Checks for common database vulnerabilities.' },
+                { key: 'xss', title: 'Cross-Site Scripting (XSS)', description: 'Detects client-side script injection flaws.' },
+                { key: 'headers', title: 'Insecure HTTP Headers', description: 'Analyzes security policies (CSP, X-Frame, etc.).' },
+            ];
+
+            return `
+                <div>
+                    <h1 class="text-4xl md:text-5xl font-extrabold mb-12">SELECT MODULES TO SCAN</h1>
+                    <div class="space-y-6 max-w-xl mx-auto md:mx-0">
+                        ${modules.map(module => `
+                            <div class="bg-bg-card p-5 rounded-xl flex items-center justify-between transition duration-300 hover:shadow-lg hover:border-accent-cyan/50 border border-transparent">
+                                <div>
+                                    <h3 class="text-xl font-semibold">${module.title}</h3>
+                                    <p class="text-gray-400 text-sm">${module.description}</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" 
+                                        ${state.scanModules[module.key] ? 'checked' : ''}
+                                        onchange="toggleModule('${module.key}')" 
+                                        class="sr-only peer">
+                                    <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-accent-cyan/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent-pink"></div>
+                                </label>
+                            </div>
+                        `).join('')}
+
+                        <div class="pt-6">
+                            <button onclick="startScan()" class="w-full cta-gradient text-white font-bold py-4 rounded-xl shadow-lg text-xl transition duration-200">
+                                START SCAN
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderScanningPage() {
+            const { scanProgress, scanLog, targetUrl } = state;
+            const logHTML = scanLog.map(log => {
+                let icon, color;
+                if (log.includes('Detected') || log.includes('found')) {
+                    icon = '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M22 10.957v-.036A8.995 8.995 0 0012 3a9 9 0 1010 7.957zM11 15v2h2v-2h-2zm0-8h2v6h-2V7z"/></svg>';
+                    color = 'text-red-500';
+                } else if (log.includes('Scanning for') || log.includes('Checking')) {
+                    icon = '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
+                    color = 'text-accent-cyan';
+                } else if (log.includes('completed')) {
+                    icon = '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
+                    color = 'text-green-500';
+                } else {
+                    icon = '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>';
+                    color = 'text-accent-purple';
+                }
+                return `
+                    <div class="flex items-start space-x-3 py-2 border-b border-gray-700 last:border-b-0">
+                        <span class="${color} flex-shrink-0">${icon}</span>
+                        <span class="text-gray-300">${log}</span>
+                    </div>
+                `;
+            }).join('');
+
+            return `
+                <h1 class="text-4xl md:text-5xl font-extrabold mb-12">SCANNING...</h1>
+
+                <!-- Progress Bar -->
+                <div class="mb-8 max-w-3xl">
+                    <div class="flex justify-between items-center mb-2 text-sm font-semibold">
+                        <p>Target: <span class="text-accent-cyan">${state.urlInput}</span></p>
+                        <p>${scanProgress}%</p>
+                    </div>
+                    <div class="w-full bg-bg-card rounded-full h-3">
+                        <div class="h-3 rounded-full bg-accent-cyan transition-all duration-500" style="width: ${scanProgress}%;"></div>
+                    </div>
+                </div>
+
+                <!-- Live Log Output -->
+                <div id="scan-log-container" class="bg-bg-card p-6 rounded-xl shadow-2xl max-w-3xl border border-accent-purple/50 overflow-y-auto overflow-y-auto-max">
+                    ${logHTML}
+                </div>
+            `;
+        }
+
+        function renderReportPage() {
+            const data = state.reportData;
+            if (!data) return '<p class="text-center text-xl text-red-500 mt-20">Error: No report data found.</p>';
+
+            const findingsHTML = data.findings.map(finding => `
+                <div class="bg-bg-card p-6 rounded-xl shadow-lg border-l-4 border-accent-pink/50 mb-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center space-x-3">
+                            <span class="text-accent-cyan">${finding.icon}</span>
+                            <h3 class="text-2xl font-bold">${finding.id}. ${finding.title}</h3>
+                        </div>
+                        <span class="px-3 py-1 text-sm font-semibold rounded-full ${finding.severityColor} text-primary-dark uppercase">
+                            ${finding.severity}
+                        </span>
+                    </div>
+                    
+                    <div class="space-y-3 text-gray-300 ml-9 border-l border-gray-700 pl-4">
+                        ${Object.entries(finding.details).map(([key, value]) => `
+                            <p>
+                                <strong class="text-white">${key}:</strong> ${value}
+                            </p>
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('');
+
+            return `
+                <h1 class="text-4xl md:text-5xl font-extrabold mb-8 text-accent-cyan">SCAN REPORT</h1>
+
+                <!-- General Info & Summary -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
+                    <!-- General Info Card -->
+                    <div class="bg-bg-card p-6 rounded-xl shadow-2xl border-t-4 border-accent-pink lg:col-span-1">
+                        <h2 class="text-xl font-bold mb-4 text-white">General Information</h2>
+                        <p class="text-gray-300"><strong class="text-white">Target URL:</strong> ${data.targetUrl}</p>
+                        <p class="text-gray-300"><strong class="text-white">Scan Date:</strong> ${data.scanDate}</p>
+                        <p class="text-gray-300"><strong class="text-white">Scan Time:</strong> ${data.scanTime}</p>
+                        <p class="text-gray-300 mt-4 text-sm italic">Tool Version: Niqat Al-Daef v1.1</p>
+                    </div>
+
+                    <!-- Summary Card -->
+                    <div class="bg-bg-card p-6 rounded-xl shadow-2xl border-t-4 border-accent-cyan lg:col-span-2">
+                        <h2 class="text-xl font-bold mb-4 text-white">Summary of Findings</h2>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                            ${[
+                                { label: 'Total Findings', value: data.summary.total, color: 'text-accent-pink' },
+                                { label: 'High Severity', value: data.summary.high, color: 'text-red-500' },
+                                { label: 'Medium Severity', value: data.summary.medium, color: 'text-orange-500' },
+                                { label: 'Low Severity', value: data.summary.low, color: 'text-green-500' },
+                            ].map(item => `
+                                <div class="p-3 bg-gray-900 rounded-lg">
+                                    <p class="text-3xl font-extrabold ${item.color}">${item.value}</p>
+                                    <p class="text-sm text-gray-400 mt-1">${item.label}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+
+                <h2 class="text-3xl font-bold mb-6 mt-8 text-white">Vulnerability Details</h2>
+                
+                <!-- Findings List -->
+                <div class="lg:max-w-4xl">
+                    ${findingsHTML}
+                </div>
+
+                <!-- Footer Note -->
+                <div class="bg-accent-purple/30 p-4 rounded-xl text-sm italic text-center mt-12 mb-8 border border-accent-purple">
+                    🛡️ Note: This tool is for educational use only. Scan only your own apps or test environments.
+                </div>
+
+                <!-- Next Actions -->
+                <div class="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-6">
+                    <button onclick="navigateTo('url')" class="cta-gradient text-white font-bold py-3 px-8 rounded-xl shadow-lg text-lg transition duration-200">
+                        Scan Another URL
+                    </button>
+                    <button onclick="console.log('Exiting app...')" class="bg-gray-700 text-white font-bold py-3 px-8 rounded-xl shadow-lg text-lg hover:bg-gray-600 transition duration-200">
+                        Exit
+                    </button>
+                </div>
+            `;
+        }
+
+        // --- Scan Simulation Logic ---
+
+        const scanSteps = [
+            'Initializing scan engines...',
+            'Scanning for SQL Injection...',
+            'Checking HTTP security headers...',
+            'Scanning for Cross-Site Scripting (XSS)...',
+            'SQL Injection vulnerability check completed.',
+            'Reflected XSS found in \'search\' parameter.',
+            'Missing Content-Security-Policy header detected.',
+            'All scan modules completed.',
+            'Generating final report...',
+            'Scan complete. Displaying results.',
+        ];
+        
+        function simulateScan() {
+            let stepIndex = 0;
+            const logElement = document.getElementById('scan-log-container');
+
+            const interval = setInterval(() => {
+                if (state.scanLog.length < scanSteps.length) {
+                    // Add new log entry
+                    const newLog = scanSteps[state.scanLog.length];
+                    setState({ scanLog: [...state.scanLog, newLog] });
+                    
+                    // Update progress (increase linearly for simulation)
+                    const newProgress = Math.min(90, Math.floor((state.scanLog.length / scanSteps.length) * 100));
+                    setState({ scanProgress: newProgress });
+
+                    // Scroll to the bottom of the log container
+                    if (logElement) {
+                        logElement.scrollTop = logElement.scrollHeight;
+                    }
+                } else {
+                    // Simulation complete
+                    clearInterval(interval);
+                    setState({ 
+                        scanProgress: 100, 
+                        isScanning: false,
+                        reportData: { ...MOCK_REPORT_DATA, targetUrl: state.urlInput } 
+                    });
+                    
+                    setTimeout(() => navigateTo('report'), 1000); // Navigate to report after final log
+                }
+            }, 800); // Delay between log entries
+        }
+
+
+        // --- Main Render Function ---
+
+        function renderApp() {
+            const app = document.getElementById('app');
+            let content = '';
+
+            // Render Header and Navigation on all pages
+            const headerHtml = renderHeader();
+
+            // Determine main content based on current page
+            switch (state.currentPage) {
+                case 'url':
+                    content = renderEnterURLPage();
+                    break;
+                case 'configure':
+                    content = renderConfigureScanPage();
+                    break;
+                case 'scanning':
+                    content = renderScanningPage();
+                    break;
+                case 'report':
+                    content = renderReportPage();
+                    break;
+                default:
+                    content = renderEnterURLPage(); // Default to URL entry
+            }
+
+            app.innerHTML = `
+                ${headerHtml}
+                <main class="p-4 md:p-8 rounded-xl">
+                    ${content}
+                </main>
+            `;
+            
+            // Re-attach event listeners after DOM update if needed
+            const urlInput = document.getElementById('url-input');
+            if (urlInput) {
+                // Ensure the JS function handleUrlChange is accessible
+                window.handleUrlChange = (e) => {
+                    state.urlInput = e.target.value;
+                    state.urlStatus = 'idle';
+                };
+                urlInput.oninput = window.handleUrlChange;
+                window.handleScanUrl = handleScanUrl;
+            }
+
+            // Make state functions globally accessible for inline handlers
+            window.navigateTo = navigateTo;
+            window.toggleModule = toggleModule;
+            window.startScan = startScan;
+        }
+        
+        // Expose functions globally for the inline HTML handlers
+        window.handleUrlChange = (e) => {
+            state.urlInput = e.target.value;
+            state.urlStatus = 'idle';
+        };
+        window.handleScanUrl = () => {
+             // Simple validation check (must contain '://' and a dot)
+            const url = state.urlInput.trim();
+            const isValidFormat = url.length > 5 && url.includes('.') && url.includes('://');
+
+            if (isValidFormat) {
+                setState({ urlStatus: 'valid' });
+                setTimeout(() => navigateTo('configure'), 500);
+            } else if (url.length === 0) {
+                setState({ urlStatus: 'idle' });
+            } else {
+                setState({ urlStatus: 'invalid' });
+            }
+        };
+
+        window.toggleModule = (moduleKey) => {
+            setState({
+                scanModules: {
+                    ...state.scanModules,
+                    [moduleKey]: !state.scanModules[moduleKey],
+                }
+            });
+        };
+
+        window.startScan = () => {
+            setState({ 
+                isScanning: true, 
+                scanLog: [], 
+                scanProgress: 0,
+                reportData: null,
+                currentPage: 'scanning', // Navigate immediately
+            });
+            setTimeout(simulateScan, 500);
+        };
+        
+        // Initial render when the page loads
+        document.addEventListener('DOMContentLoaded', renderApp);
+
+    </script>
+</body>
+</html>
