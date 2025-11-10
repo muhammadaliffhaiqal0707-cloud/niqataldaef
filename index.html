@@ -6,9 +6,8 @@
     <title>NIQAT Al-Daef - Security Scanner</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- NEW: Load html2pdf.js for generating reports -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <!-- Load Tone.js for audio feedback -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
 
     <!-- Configure Tailwind to use custom colors -->
     <script>
@@ -63,7 +62,7 @@
             max-height: calc(100vh - 12rem); /* Adjust based on header/footer size */
         }
 
-        /* Abstract Animated Pattern for Homepage */
+        /* --- New: Abstract Animated Pattern for Homepage --- */
         @keyframes flowPattern {
             0% { background-position: 0% 0%; }
             100% { background-position: 100% 100%; }
@@ -83,7 +82,7 @@
             opacity: 0.3;
         }
 
-        /* Page Transition Effect */
+        /* --- New: Page Transition Effect --- */
         .page-content-transition {
             opacity: 0;
             transform: translateY(20px);
@@ -115,6 +114,7 @@
             scanProgress: 0, // 0 to 100
             isScanning: false,
             reportData: null,
+            isAudioInitialized: false, // New flag for Tone.js
         };
 
         const MOCK_REPORT_DATA = {
@@ -168,6 +168,66 @@
             ],
         };
 
+        // --- Tone.js Audio Functions ---
+        let synth, noise, metal;
+        
+        // Initialize audio components after user interaction
+        async function initializeAudio() {
+            if (state.isAudioInitialized || typeof Tone === 'undefined') return;
+            
+            try {
+                // Wait for the user to interact with the document to start the audio context
+                await Tone.start();
+                synth = new Tone.Synth({
+                    oscillator: { type: "square" },
+                    envelope: { attack: 0.005, decay: 0.2, sustain: 0.1, release: 0.5 }
+                }).toDestination();
+                
+                noise = new Tone.NoiseSynth({
+                    noise: { type: "pink" },
+                    envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.5 }
+                }).toDestination();
+                
+                metal = new Tone.MetalSynth({
+                    frequency: 300,
+                    envelope: { attack: 0.001, decay: 0.3, release: 0.2 },
+                    harmonicity: 5.1,
+                    modulationIndex: 1,
+                    resonance: 3000,
+                    octaves: 1
+                }).toDestination();
+
+                state.isAudioInitialized = true;
+                console.log("Audio Context initialized.");
+            } catch (error) {
+                console.error("Failed to initialize audio:", error);
+            }
+        }
+
+        function playSound(type) {
+            if (!state.isAudioInitialized && typeof Tone !== 'undefined') {
+                initializeAudio();
+            }
+            if (!synth) return; // If initialization failed, skip sound
+            
+            switch (type) {
+                case 'start': // Scan Start (affirmative ping)
+                    synth.triggerAttackRelease("C5", "8n");
+                    synth.triggerAttackRelease("G5", "8n", "+0.15");
+                    break;
+                case 'vulnerability': // Vulnerability Detected (sharp warning)
+                    metal.triggerAttackRelease("C3", "16n");
+                    noise.triggerAttackRelease("8n", "+0.05");
+                    break;
+                case 'complete': // Scan Complete (success chord)
+                    synth.triggerAttackRelease("E5", "8n");
+                    synth.triggerAttackRelease("G5", "8n", "+0.1");
+                    synth.triggerAttackRelease("C6", "4n", "+0.2");
+                    break;
+            }
+        }
+
+
         // --- Core Functions ---
 
         /**
@@ -187,59 +247,28 @@
             // Re-render the app to trigger the content transition effect
             const app = document.getElementById('app');
             if (app) {
-                // Force content to fade out before setting new content
+                // Optional: Force content to fade out before setting new content
                 const mainContent = app.querySelector('main');
                 if (mainContent) {
                     mainContent.classList.remove('page-content-transition');
                 }
             }
             
-            // Wait briefly to allow the visual fade-out before setting new state
+            // Wait briefly to allow any visual fade-out before setting new state
             setTimeout(() => {
                 setState({ currentPage: page });
             }, 50); 
         }
-        
-        /**
-         * Generates and downloads the current report content as a PDF.
-         */
-        function downloadReportPdf() {
-            const element = document.getElementById('report-content');
-            
-            if (!element) {
-                console.error("Report content element not found.");
-                return;
-            }
-
-            // Temporarily hide buttons and navigation elements for cleaner PDF capture
-            const buttons = document.querySelectorAll('.hide-on-pdf');
-            buttons.forEach(btn => btn.style.display = 'none');
-            
-            // Configuration for the PDF generation
-            const opt = {
-                margin: 1,
-                filename: `Security_Report_${state.reportData.targetUrl.replace(/[^a-z0-9]/gi, '_')}.pdf`,
-                image: { type: 'jpeg', quality: 0.98 },
-                html2canvas: { scale: 2, logging: false, dpi: 192, letterRendering: true },
-                jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
-            };
-
-            // Use html2pdf to generate and save the file
-            html2pdf().set(opt).from(element).save().then(() => {
-                // Restore buttons after PDF generation is complete
-                buttons.forEach(btn => btn.style.display = 'flex'); 
-            }).catch(error => {
-                console.error("PDF generation failed:", error);
-                // Ensure buttons are restored even on failure
-                buttons.forEach(btn => btn.style.display = 'flex');
-            });
-        }
-
 
         /**
          * Renders the header and navigation bar.
          */
         function renderHeader() {
+            // Ensure audio is initialized on first user interaction (like clicking a nav button)
+            if (!state.isAudioInitialized) {
+                initializeAudio();
+            }
+            
             const isMainWorkflow = ['url', 'configure', 'scanning', 'report'].includes(state.currentPage);
 
             const steps = [
@@ -285,6 +314,8 @@
         }
 
         // --- Page Renderers ---
+        // (Services, About Us, Contact pages remain largely the same, but are now wrapped in the transition class)
+
         function renderServicesPage() {
             const modules = [
                 { 
@@ -447,6 +478,9 @@
             };
 
             const startScan = () => {
+                // Trigger start sound
+                playSound('start');
+                
                 // Prepare the scan log and navigate to the scanning page
                 setState({ 
                     isScanning: true, 
@@ -480,7 +514,7 @@
                                         ${state.scanModules[module.key] ? 'checked' : ''}
                                         onchange="window.toggleModule('${module.key}')" 
                                         class="sr-only peer">
-                                    <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-accent-cyan/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white peer-checked:after:bg-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent-pink"></div>
+                                    <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-accent-cyan/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent-pink"></div>
                                 </label>
                             </div>
                         `).join('')}
@@ -568,57 +602,52 @@
             `).join('');
 
             return `
-                <div id="report-content"> <!-- PDF TARGET WRAPPER -->
-                    <h1 class="text-4xl md:text-5xl font-extrabold mb-8 text-accent-cyan">SCAN REPORT</h1>
+                <h1 class="text-4xl md:text-5xl font-extrabold mb-8 text-accent-cyan">SCAN REPORT</h1>
 
-                    <!-- General Info & Summary -->
-                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
-                        <!-- General Info Card -->
-                        <div class="bg-bg-card p-6 rounded-xl shadow-2xl border-t-4 border-accent-pink lg:col-span-1">
-                            <h2 class="text-xl font-bold mb-4 text-white">General Information</h2>
-                            <p class="text-gray-300"><strong class="text-white">Target URL:</strong> ${data.targetUrl}</p>
-                            <p class="text-gray-300"><strong class="text-white">Scan Date:</strong> ${data.scanDate}</p>
-                            <p class="text-gray-300"><strong class="text-white">Scan Time:</strong> ${data.scanTime}</p>
-                            <p class="text-gray-300 mt-4 text-sm italic">Tool Version: Niqat Al-Daef v1.1</p>
-                        </div>
+                <!-- General Info & Summary -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
+                    <!-- General Info Card -->
+                    <div class="bg-bg-card p-6 rounded-xl shadow-2xl border-t-4 border-accent-pink lg:col-span-1">
+                        <h2 class="text-xl font-bold mb-4 text-white">General Information</h2>
+                        <p class="text-gray-300"><strong class="text-white">Target URL:</strong> ${data.targetUrl}</p>
+                        <p class="text-gray-300"><strong class="text-white">Scan Date:</strong> ${data.scanDate}</p>
+                        <p class="text-gray-300"><strong class="text-white">Scan Time:</strong> ${data.scanTime}</p>
+                        <p class="text-gray-300 mt-4 text-sm italic">Tool Version: Niqat Al-Daef v1.1</p>
+                    </div>
 
-                        <!-- Summary Card -->
-                        <div class="bg-bg-card p-6 rounded-xl shadow-2xl border-t-4 border-accent-cyan lg:col-span-2">
-                            <h2 class="text-xl font-bold mb-4 text-white">Summary of Findings</h2>
-                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-                                ${[
-                                    { label: 'Total Findings', value: data.summary.total, color: 'text-accent-pink' },
-                                    { label: 'High Severity', value: data.summary.high, color: 'text-red-500' },
-                                    { label: 'Medium Severity', value: data.summary.medium, color: 'text-orange-500' },
-                                    { label: 'Low Severity', value: data.summary.low, color: 'text-green-500' },
-                                ].map(item => `
-                                    <div class="p-3 bg-gray-900 rounded-lg">
-                                        <p class="text-3xl font-extrabold ${item.color}">${item.value}</p>
-                                        <p class="text-sm text-gray-400 mt-1">${item.label}</p>
-                                    </div>
-                                `).join('')}
-                            </div>
+                    <!-- Summary Card -->
+                    <div class="bg-bg-card p-6 rounded-xl shadow-2xl border-t-4 border-accent-cyan lg:col-span-2">
+                        <h2 class="text-xl font-bold mb-4 text-white">Summary of Findings</h2>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                            ${[
+                                { label: 'Total Findings', value: data.summary.total, color: 'text-accent-pink' },
+                                { label: 'High Severity', value: data.summary.high, color: 'text-red-500' },
+                                { label: 'Medium Severity', value: data.summary.medium, color: 'text-orange-500' },
+                                { label: 'Low Severity', value: data.summary.low, color: 'text-green-500' },
+                            ].map(item => `
+                                <div class="p-3 bg-gray-900 rounded-lg">
+                                    <p class="text-3xl font-extrabold ${item.color}">${item.value}</p>
+                                    <p class="text-sm text-gray-400 mt-1">${item.label}</p>
+                                </div>
+                            `).join('')}
                         </div>
                     </div>
+                </div>
 
-                    <h2 class="text-3xl font-bold mb-6 mt-8 text-white">Vulnerability Details</h2>
-                    
-                    <!-- Findings List -->
-                    <div class="lg:max-w-4xl">
-                        ${findingsHTML}
-                    </div>
+                <h2 class="text-3xl font-bold mb-6 mt-8 text-white">Vulnerability Details</h2>
+                
+                <!-- Findings List -->
+                <div class="lg:max-w-4xl">
+                    ${findingsHTML}
+                </div>
 
-                    <!-- Footer Note -->
-                    <div class="bg-accent-purple/30 p-4 rounded-xl text-sm italic text-center mt-12 mb-8 border border-accent-purple">
-                        🛡️ Note: This tool is for educational use only. Scan only your own apps or test environments.
-                    </div>
-                </div> <!-- END PDF TARGET WRAPPER -->
+                <!-- Footer Note -->
+                <div class="bg-accent-purple/30 p-4 rounded-xl text-sm italic text-center mt-12 mb-8 border border-accent-purple">
+                    🛡️ Note: This tool is for educational use only. Scan only your own apps or test environments.
+                </div>
 
-                <!-- Next Actions (HIDDEN ON PDF) -->
-                <div class="hide-on-pdf flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-6 mt-8">
-                    <button onclick="window.downloadReportPdf()" class="bg-accent-cyan hover:bg-accent-cyan/80 text-primary-dark font-bold py-3 px-8 rounded-xl shadow-lg text-lg transition duration-200">
-                        Download Report as PDF
-                    </button>
+                <!-- Next Actions -->
+                <div class="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-6">
                     <button onclick="window.navigateTo('url')" class="cta-gradient text-white font-bold py-3 px-8 rounded-xl shadow-lg text-lg transition duration-200">
                         Scan Another URL
                     </button>
@@ -645,12 +674,18 @@
         ];
         
         function simulateScan() {
+            let stepIndex = 0;
             const logElement = document.getElementById('scan-log-container');
 
             const interval = setInterval(() => {
                 if (state.scanLog.length < scanSteps.length) {
                     const newLog = scanSteps[state.scanLog.length];
                     
+                    // Trigger sound feedback for important events
+                    if (newLog.includes('XSS found')) {
+                        playSound('vulnerability');
+                    }
+
                     // Add new log entry
                     setState({ scanLog: [...state.scanLog, newLog] });
                     
@@ -665,6 +700,7 @@
                 } else {
                     // Simulation complete
                     clearInterval(interval);
+                    playSound('complete'); // Play success sound
                     
                     setState({ 
                         scanProgress: 100, 
@@ -721,10 +757,11 @@
                 </main>
             `;
             
-            // Make functions available globally for inline HTML handlers
+            // Re-bind global functions
             window.handleUrlChange = (e) => {
                 state.urlInput = e.target.value;
                 state.urlStatus = 'idle';
+                // Note: Re-render is deferred until a significant action is taken
             };
             
             window.handleScanUrl = () => {
@@ -733,6 +770,8 @@
 
                 if (isValidFormat) {
                     setState({ urlStatus: 'valid' });
+                    // Trigger sound on successful link test
+                    playSound('start'); 
                     setTimeout(() => navigateTo('configure'), 700);
                 } else if (url.length === 0) {
                     setState({ urlStatus: 'idle' });
@@ -751,6 +790,8 @@
             };
 
             window.startScan = () => {
+                // The actual start sound is now in renderConfigureScanPage, but we keep this stub 
+                // for the inline handler compatibility. The main logic moves to renderConfigureScanPage.
                 if (!state.isScanning) {
                      setState({ 
                         isScanning: true, 
@@ -761,8 +802,6 @@
                     setTimeout(simulateScan, 500);
                 }
             };
-            
-            window.downloadReportPdf = downloadReportPdf;
             
             // Ensure handleUrlChange updates state correctly on input
             const urlInput = document.getElementById('url-input');
@@ -777,6 +816,8 @@
         // Initial setup on load
         document.addEventListener('DOMContentLoaded', () => {
             renderApp();
+            // Initialize audio on first load (it will start the context only after a user gesture)
+            initializeAudio(); 
         });
 
     </script>
