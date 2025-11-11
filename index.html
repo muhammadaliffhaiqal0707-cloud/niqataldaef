@@ -6,8 +6,9 @@
     <title>NIQAT Al-Daef - Security Scanner</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Load Tone.js for audio feedback -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
+    
+    <!-- Load html2pdf.js for generating reports -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
     <!-- Configure Tailwind to use custom colors -->
     <script>
@@ -62,13 +63,12 @@
             max-height: calc(100vh - 12rem); /* Adjust based on header/footer size */
         }
 
-        /* --- New: Abstract Animated Pattern for Homepage --- */
+        /* Abstract Animated Pattern for Homepage */
         @keyframes flowPattern {
             0% { background-position: 0% 0%; }
             100% { background-position: 100% 100%; }
         }
         .abstract-pattern {
-            /* Subtle gradients mimicking network nodes or data flow */
             background-image: radial-gradient(circle at 100% 100%, #8e24aa44 0%, transparent 70%),
                               radial-gradient(circle at 0% 0%, #00bcd444 0%, transparent 70%);
             background-size: 200% 200%;
@@ -78,11 +78,11 @@
             left: 0;
             width: 100%;
             height: 100%;
-            z-index: 1; /* Place below content */
+            z-index: 1; 
             opacity: 0.3;
         }
 
-        /* --- New: Page Transition Effect --- */
+        /* NEW: Page Transition Effect - Applied to main content */
         .page-content-transition {
             opacity: 0;
             transform: translateY(20px);
@@ -90,6 +90,12 @@
         }
         @keyframes pageFadeIn {
             to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .cursor-not-allowed-step {
+            cursor: not-allowed;
+            opacity: 0.5;
+            pointer-events: none; /* Disable click events entirely when locked */
         }
     </style>
 </head>
@@ -114,7 +120,7 @@
             scanProgress: 0, // 0 to 100
             isScanning: false,
             reportData: null,
-            isAudioInitialized: false, // New flag for Tone.js
+            isUrlValidated: false, // NEW: Track successful validation
         };
 
         const MOCK_REPORT_DATA = {
@@ -123,7 +129,7 @@
             targetUrl: 'http://localhost/dvwa/',
             summary: {
                 total: 3,
-                high: 1, // High is critical
+                high: 1, 
                 medium: 1,
                 low: 1,
             },
@@ -168,66 +174,6 @@
             ],
         };
 
-        // --- Tone.js Audio Functions ---
-        let synth, noise, metal;
-        
-        // Initialize audio components after user interaction
-        async function initializeAudio() {
-            if (state.isAudioInitialized || typeof Tone === 'undefined') return;
-            
-            try {
-                // Wait for the user to interact with the document to start the audio context
-                await Tone.start();
-                synth = new Tone.Synth({
-                    oscillator: { type: "square" },
-                    envelope: { attack: 0.005, decay: 0.2, sustain: 0.1, release: 0.5 }
-                }).toDestination();
-                
-                noise = new Tone.NoiseSynth({
-                    noise: { type: "pink" },
-                    envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.5 }
-                }).toDestination();
-                
-                metal = new Tone.MetalSynth({
-                    frequency: 300,
-                    envelope: { attack: 0.001, decay: 0.3, release: 0.2 },
-                    harmonicity: 5.1,
-                    modulationIndex: 1,
-                    resonance: 3000,
-                    octaves: 1
-                }).toDestination();
-
-                state.isAudioInitialized = true;
-                console.log("Audio Context initialized.");
-            } catch (error) {
-                console.error("Failed to initialize audio:", error);
-            }
-        }
-
-        function playSound(type) {
-            if (!state.isAudioInitialized && typeof Tone !== 'undefined') {
-                initializeAudio();
-            }
-            if (!synth) return; // If initialization failed, skip sound
-            
-            switch (type) {
-                case 'start': // Scan Start (affirmative ping)
-                    synth.triggerAttackRelease("C5", "8n");
-                    synth.triggerAttackRelease("G5", "8n", "+0.15");
-                    break;
-                case 'vulnerability': // Vulnerability Detected (sharp warning)
-                    metal.triggerAttackRelease("C3", "16n");
-                    noise.triggerAttackRelease("8n", "+0.05");
-                    break;
-                case 'complete': // Scan Complete (success chord)
-                    synth.triggerAttackRelease("E5", "8n");
-                    synth.triggerAttackRelease("G5", "8n", "+0.1");
-                    synth.triggerAttackRelease("C6", "4n", "+0.2");
-                    break;
-            }
-        }
-
-
         // --- Core Functions ---
 
         /**
@@ -240,49 +186,101 @@
         }
 
         /**
-         * Global navigation function.
-         * @param {string} page - The page key ('url', 'configure', 'scanning', 'report', 'services', 'about_us', 'contact').
+         * Global navigation function with transition logic.
+         * @param {string} page - The page key.
          */
         function navigateTo(page) {
-            // Re-render the app to trigger the content transition effect
+            // Check for navigation lock only if trying to advance the main workflow
+            const isAdvancingWorkflow = ['configure', 'scanning', 'report'].includes(page);
+            const isMainWorkflow = ['url', 'configure', 'scanning', 'report'].includes(state.currentPage);
+
+            if (isAdvancingWorkflow && !state.isUrlValidated && state.currentPage === 'url') {
+                // Lock: Cannot go to 'configure' from 'url' without valid URL
+                return;
+            }
+            
+            if (isMainWorkflow && isAdvancingWorkflow && page !== 'report' && !state.isUrlValidated) {
+                 // Lock for other steps if validation hasn't occurred
+                 return;
+            }
+            
+            if (page === 'report' && !state.reportData && !state.isScanning) {
+                // Lock: Cannot go directly to report page if no report exists
+                return;
+            }
+
+            // Apply fade-out effect
             const app = document.getElementById('app');
             if (app) {
-                // Optional: Force content to fade out before setting new content
                 const mainContent = app.querySelector('main');
                 if (mainContent) {
                     mainContent.classList.remove('page-content-transition');
                 }
             }
             
-            // Wait briefly to allow any visual fade-out before setting new state
+            // Wait briefly for the fade-out transition (50ms is minimal but effective)
             setTimeout(() => {
                 setState({ currentPage: page });
             }, 50); 
         }
+        
+        /**
+         * Generates and downloads the current report content as a PDF.
+         */
+        function downloadReportPdf() {
+            const element = document.getElementById('report-content');
+            
+            if (!element) {
+                console.error("Report content element not found.");
+                return;
+            }
+
+            // Temporarily hide buttons and navigation elements for cleaner PDF capture
+            const buttons = document.querySelectorAll('.hide-on-pdf');
+            buttons.forEach(btn => btn.style.display = 'none');
+            
+            // Configuration for the PDF generation
+            const opt = {
+                margin: 1,
+                filename: `Security_Report_${state.reportData.targetUrl.replace(/[^a-z0-9]/gi, '_')}.pdf`,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2, logging: false, dpi: 192, letterRendering: true },
+                jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
+            };
+
+            // Use html2pdf to generate and save the file
+            html2pdf().set(opt).from(element).save().then(() => {
+                // Restore buttons after PDF generation is complete
+                buttons.forEach(btn => btn.style.display = 'flex'); 
+            }).catch(error => {
+                console.error("PDF generation failed:", error);
+                // Ensure buttons are restored even on failure
+                buttons.forEach(btn => btn.style.display = 'flex');
+            });
+        }
+
 
         /**
          * Renders the header and navigation bar.
          */
         function renderHeader() {
-            // Ensure audio is initialized on first user interaction (like clicking a nav button)
-            if (!state.isAudioInitialized) {
-                initializeAudio();
-            }
-            
             const isMainWorkflow = ['url', 'configure', 'scanning', 'report'].includes(state.currentPage);
+            const isUrlValid = state.isUrlValidated;
+            const isScanning = state.isScanning;
+            const hasReport = !!state.reportData;
 
             const steps = [
-                { key: 'url', label: '1. Enter URL' },
-                { key: 'configure', label: '2. Configure Scan' },
-                { key: 'scanning', label: '3. Scanning' },
-                { key: 'report', label: '4. View Report' },
+                { key: 'url', label: '1. Enter URL', canNavigate: true },
+                { key: 'configure', label: '2. Configure Scan', canNavigate: isUrlValid || state.currentPage === 'configure' || isScanning || hasReport },
+                { key: 'scanning', label: '3. Scanning', canNavigate: isScanning || hasReport || state.currentPage === 'scanning' },
+                { key: 'report', label: '4. View Report', canNavigate: hasReport || state.currentPage === 'report' },
             ];
 
             return `
                 <nav class="flex justify-between items-center py-4 mb-8 relative z-20">
                     <div class="flex items-center space-x-2 text-xl font-bold">
                         <svg class="w-6 h-6 text-accent-pink" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        <span>Aliff Tech Sdn Bhd</span>
+                        <span>ALIFFTOTAL</span>
                     </div>
                     <div class="hidden md:flex space-x-6 text-sm text-gray-300">
                         <button onclick="navigateTo('url')" class="hover:text-accent-cyan transition duration-200 ${state.currentPage === 'url' ? 'text-accent-cyan' : ''}">Home</button>
@@ -298,59 +296,82 @@
                 <!-- Progress Bar / Stepper: Only shown in the main scanning workflow -->
                 ${isMainWorkflow ? `
                     <div class="flex justify-between items-center bg-bg-card p-2 rounded-xl shadow-lg mb-12 border border-accent-purple/50 relative z-20">
-                        ${steps.map(step => `
-                            <div class="flex-1 text-center">
-                                <button onclick="navigateTo('${step.key}')" 
-                                    class="w-full py-2 px-1 text-xs md:text-sm rounded-lg font-semibold transition duration-300 
-                                    ${step.key === state.currentPage ? 'progress-step-active text-primary-dark' : 'text-gray-400 hover:text-white hover:bg-accent-purple/20'}">
-                                    ${step.label}
-                                </button>
-                            </div>
-                            ${step.key !== 'report' ? '<div class="text-gray-600 mx-1 md:mx-2">&gt;</div>' : ''}
-                        `).join('')}
+                        ${steps.map(step => {
+                            // Determine if the step button is clickable based on the workflow lock status
+                            const canClick = step.key === state.currentPage || (isUrlValid && step.key === 'configure') || (hasReport && step.key !== 'url');
+                            const clickAction = canClick ? `MapsTo('${step.key}')` : 'void(0)';
+                            const disabledClass = !canClick && step.key !== 'url' ? 'cursor-not-allowed-step' : '';
+
+                            return `
+                                <div class="flex-1 text-center">
+                                    <button onclick="${clickAction}" 
+                                        class="w-full py-2 px-1 text-xs md:text-sm rounded-lg font-semibold transition duration-300 ${disabledClass}
+                                        ${step.key === state.currentPage ? 'progress-step-active text-primary-dark' : 'text-gray-400 hover:text-white hover:bg-accent-purple/20'}">
+                                        ${step.label}
+                                    </button>
+                                </div>
+                                ${step.key !== 'report' ? '<div class="text-gray-600 mx-1 md:mx-2">&gt;</div>' : ''}
+                            `;
+                        }).join('')}
                     </div>
                 ` : '<div class="mb-12"></div>'}
             `;
         }
 
         // --- Page Renderers ---
-        // (Services, About Us, Contact pages remain largely the same, but are now wrapped in the transition class)
-
+        
+        // --- UPDATED RENDER FUNCTION FOR PROFESSIONAL SERVICES PAGE ---
         function renderServicesPage() {
             const modules = [
                 { 
-                    title: 'SQL Injection (SQLi)', 
-                    description: 'This module checks for vulnerabilities that allow an attacker to modify database queries to retrieve, change, or delete unauthorized data.' 
+                    title: 'Database Integrity & SQLi Analysis', 
+                    icon: `<svg class="w-6 h-6 mr-3 flex-shrink-0 text-accent-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10m-4-10h20M4 7h16M4 17h16m0 0v-6"></path></svg>`,
+                    description: 'We simulate complex injection attacks to identify vulnerabilities that could lead to unauthorized data retrieval, modification, or complete database compromise. Essential for protecting sensitive customer and operational data.' 
                 },
                 { 
-                    title: 'Cross-Site Scripting (XSS)', 
-                    description: 'Detects malicious scripts injected into web pages viewed by other users, often used to steal sessions or personal information.' 
+                    title: 'Client-Side Defense (XSS & CSRF)', 
+                    icon: `<svg class="w-6 h-6 mr-3 flex-shrink-0 text-accent-pink" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>`,
+                    description: 'This assessment targets flaws like Cross-Site Scripting (XSS), which can be exploited for session hijacking, user experience manipulation, or malware distribution via your application.' 
                 },
                 { 
-                    title: 'Insecure HTTP Headers', 
-                    description: 'Analyzes and reports the absence or misconfiguration of security headers like Content-Security-Policy (CSP), which are vital for mitigating XSS and click-jacking risks.' 
+                    title: 'Infrastructure & Header Policy Review', 
+                    icon: `<svg class="w-6 h-6 mr-3 flex-shrink-0 text-accent-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944c-3.138 0-6.195 1.144-8.544 3.393M12 21c-4.418 0-8-3.582-8-8s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z"></path></svg>`,
+                    description: 'Comprehensive analysis of critical HTTP security headers (CSP, HSTS, XFO) to ensure your application enforces modern defense standards, drastically reducing surface area for various web attacks.' 
                 },
             ];
 
             return `
                 <div class="max-w-4xl mx-auto p-6 bg-bg-card rounded-xl shadow-2xl border border-accent-cyan/50 relative z-20">
-                    <h1 class="text-4xl md:text-5xl font-extrabold mb-6 text-accent-cyan">OUR SERVICES</h1>
+                    <h1 class="text-4xl md:text-5xl font-extrabold mb-4 text-accent-cyan">ADVANCED WEB SECURITY ASSURANCE</h1>
                     <p class="text-lg text-gray-300 mb-8">
-                        NIQAT Al-Daef is a web security scanning tool designed to identify critical weaknesses in your web applications. Our focus is on providing clear reports and actionable recommendations.
+                        ALIFFTOTAL provides expert-level vulnerability scanning through our proprietary tool, <strong class="text-white">NIQAT Al-Daef</strong>. Our services are designed to offer fast, comprehensive, and actionable intelligence to fortify your web applications against real-world threats.
                     </p>
 
-                    <h2 class="text-3xl font-bold mb-4 text-accent-pink">Key Scanning Modules</h2>
-                    <div class="space-y-5">
+                    <h2 class="text-3xl font-bold mb-5 text-accent-pink border-b border-accent-pink/50 pb-2">Our Core Scanning Capabilities</h2>
+                    
+                    <div class="space-y-6">
                         ${modules.map(module => `
-                            <div class="p-4 border-l-4 border-accent-pink bg-gray-900/50 rounded-lg">
-                                <h3 class="text-xl font-semibold text-white">${module.title}</h3>
-                                <p class="text-gray-400 mt-1">${module.description}</p>
+                            <div class="p-5 border border-gray-700 bg-gray-900/50 rounded-xl transition duration-300 hover:shadow-2xl hover:border-accent-cyan">
+                                <div class="flex items-start">
+                                    ${module.icon}
+                                    <div>
+                                        <h3 class="text-xl font-semibold text-white mb-1">${module.title}</h3>
+                                        <p class="text-gray-400 mt-1">${module.description}</p>
+                                    </div>
+                                </div>
                             </div>
                         `).join('')}
                     </div>
+
+                    <div class="mt-10 p-6 bg-accent-purple/20 rounded-xl border border-accent-purple">
+                        <h3 class="text-2xl font-bold mb-3 text-white">Commitment to Clarity</h3>
+                        <p class="text-gray-300">
+                            Every scan generates a detailed report that is categorized by severity and includes <strong class="text-white">precise remediation advice</strong>. We don't just find problems; we provide the roadmap to fixing them effectively.
+                        </p>
+                    </div>
                     
                     <button onclick="navigateTo('url')" class="mt-10 cta-gradient text-white font-bold py-3 px-8 rounded-xl shadow-lg transition duration-200">
-                        Start Scanning Now
+                        Start Your Security Scan Now
                     </button>
                 </div>
             `;
@@ -358,21 +379,28 @@
         
         function renderAboutUsPage() {
             return `
-                <div class="max-w-4xl mx-auto p-6 bg-bg-card rounded-xl shadow-2xl border border-accent-purple/50 text-center relative z-20">
-                    <h1 class="text-4xl md:text-5xl font-extrabold mb-6 text-accent-cyan">ABOUT US</h1>
-                    <div class="bg-gray-900/50 p-6 rounded-lg">
-                        <h2 class="text-3xl font-bold mb-4 text-accent-pink">Aliff Tech Sdn Bhd</h2>
-                        <p class="text-lg text-gray-300 leading-relaxed">
-                            <span class="font-bold text-white">Aliff Tech Sdn Bhd</span> is a company managed by
-                            <span class="font-extrabold text-accent-cyan">Muhammad Aliff Haiqal Bin Jamaludin</span>, a **Islamic Science University of Malaysia (USIM) student**,
-                            who is highly passionate about pioneering the technology field in Malaysia.
+                <div class="max-w-4xl mx-auto p-6 bg-bg-card rounded-xl shadow-2xl border border-accent-purple/50 relative z-20">
+                    <h1 class="text-4xl md:text-5xl font-extrabold mb-6 text-accent-cyan">OUR MISSION & EXPERTISE</h1>
+                    
+                    <div class="space-y-6 text-lg text-gray-300">
+                        <p>
+                            <span class="font-extrabold text-white">ALIFFTOTAL</span> is a dedicated cybersecurity firm focused on securing the digital infrastructure of businesses in Malaysia and beyond. We are driven by the vision of a safer internet where preemptive defense is the standard, not the exception.
                         </p>
-                        <p class="text-lg text-gray-300 mt-4">
-                            We are committed to contributing to the technology community by providing effective tools and education for cybersecurity.
+                        
+                        <div class="bg-gray-900/50 p-6 rounded-lg border-l-4 border-accent-pink">
+                            <h2 class="text-2xl font-bold mb-3 text-accent-pink">NIQAT Al-Daef: Our Core Solution</h2>
+                            <p>
+                                <strong class="text-white">NIQAT Al-Daef</strong> (which translates roughly to 'Weakness Spot') is our flagship, proprietary web application scanner. Developed by our team of security experts, it utilizes advanced testing methodologies to identify critical weaknesses like SQLi, XSS, and misconfigured headers, ensuring comprehensive vulnerability coverage.
+                            </p>
+                        </div>
+
+                        <p>
+                            Our expertise lies in bridging the gap between complexity and clear, actionable security results. We empower developers and security teams with the precise intelligence needed to patch vulnerabilities effectively and maintain continuous compliance.
                         </p>
                     </div>
+                    
                     <button onclick="navigateTo('contact')" class="mt-10 bg-accent-purple hover:bg-accent-purple/80 text-white font-bold py-3 px-8 rounded-xl shadow-lg transition duration-200">
-                        Contact Our Manager
+                        Contact Our Team
                     </button>
                 </div>
             `;
@@ -380,34 +408,42 @@
 
         function renderContactPage() {
             return `
-                <div class="max-w-4xl mx-auto p-6 bg-bg-card rounded-xl shadow-2xl border border-accent-pink/50 text-center relative z-20">
-                    <h1 class="text-4xl md:text-5xl font-extrabold mb-6 text-accent-cyan">CONTACT US</h1>
+                <div class="max-w-4xl mx-auto p-6 bg-bg-card rounded-xl shadow-2xl border border-accent-pink/50 relative z-20">
+                    <h1 class="text-4xl md:text-5xl font-extrabold mb-6 text-accent-cyan">CONTACT OUR OPERATIONS</h1>
                     
-                    <div class="space-y-6">
-                        <div class="bg-gray-900/50 p-6 rounded-lg">
-                            <h2 class="text-3xl font-bold mb-3 text-accent-pink">Official Phone</h2>
-                            <p class="text-4xl font-extrabold text-white">
-                                01139991625
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 space-y-4 md:space-y-0">
+                        
+                        <!-- Contact Card 1: Email Support -->
+                        <div class="bg-gray-900/50 p-6 rounded-lg border-t-4 border-accent-pink text-center">
+                            <svg class="w-10 h-10 mx-auto mb-3 text-accent-pink" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8m-17 4h18a2 2 0 002-2V6a2 2 0 00-2-2H4a2 2 0 00-2 2v6a2 2 0 002 2z"></path></svg>
+                            <h2 class="text-2xl font-bold mb-1 text-white">Technical Support</h2>
+                            <p class="text-lg font-extrabold text-accent-cyan mb-2">
+                                <a href="mailto:support@alifftotal.com" class="hover:underline">support@alifftotal.com</a>
                             </p>
-                            <p class="text-gray-400 mt-2">Please call during office hours only.</p>
+                            <p class="text-gray-400">For issues with NIQAT Al-Daef or scanning results.</p>
                         </div>
                         
-                        <div class="bg-gray-900/50 p-6 rounded-lg">
-                            <h2 class="text-3xl font-bold mb-3 text-accent-pink">Social Media</h2>
-                            <p class="text-lg text-gray-300">
-                                Follow the latest developments of Aliff Tech Sdn Bhd through our social media platforms.
+                        <!-- Contact Card 2: Corporate Address & Phone -->
+                        <div class="bg-gray-900/50 p-6 rounded-lg border-t-4 border-accent-cyan text-center">
+                            <svg class="w-10 h-10 mx-auto mb-3 text-accent-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.8A2 2 0 0110.586 20.8L6.343 16.657A8 8 0 1117.657 16.657z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                            <h2 class="text-2xl font-bold mb-1 text-white">Corporate Office</h2>
+                            <p class="text-sm text-gray-300">
+                                ALIFFTOTAL SDN. BHD. (Placeholder) <br>
+                                Level 15, Cyberjaya Tower, <br>
+                                63000 Cyberjaya, Selangor, Malaysia.
                             </p>
-                            <div class="flex justify-center space-x-6 mt-4">
-                                <a href="#" class="text-3xl text-accent-cyan hover:text-accent-pink transition duration-200" title="Facebook">
-                                    <!-- Simple Placeholder for Social Icon -->
-                                    <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm3.957 6.452l-.565.045c-.886.071-1.353.486-1.353 1.39v.913h2.364l-.307 2.373h-2.057v6.096h-2.348v-6.096H9.13v-2.373h1.869v-1.12c0-2.05 1.25-3.167 3.08-3.167.872 0 1.62.065 1.838.093v2.09z"/></svg>
-                                </a>
-                                <a href="#" class="text-3xl text-accent-cyan hover:text-accent-pink transition duration-200" title="Twitter">
-                                    <!-- Simple Placeholder for Social Icon -->
-                                    <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M22.46 6c-.77.35-1.58.58-2.43.64.84-.53 1.48-1.28 1.78-2.21-.83.49-1.74.85-2.7.92-.78-.83-1.89-1.35-3.13-1.35-2.36 0-4.28 1.92-4.28 4.28 0 .34.04.67.11.99-3.56-.18-6.7-1.89-8.8-4.48-.37.64-.58 1.38-.58 2.16 0 1.49.76 2.81 1.92 3.59-.7-.02-1.36-.21-1.93-.53v.05c0 2.08 1.48 3.82 3.44 4.21-.36.1-.73.15-1.12.15-.27 0-.53-.03-.79-.07.55 1.7 2.14 2.94 4.02 2.98-1.47 1.15-3.32 1.83-5.32 1.83-.34 0-.67-.02-1-.06C3.9 19.33 6.3 20 8.87 20c7.04 0 10.9-5.84 10.9-10.9 0-.16 0-.33-.01-.49.75-.54 1.4-1.22 1.92-2z"/></svg>
-                                </a>
-                            </div>
                         </div>
+                        
+                        <!-- Contact Card 3: Phone & Hours (Full Width) -->
+                        <div class="md:col-span-2 bg-gray-900/50 p-6 rounded-lg border-t-4 border-accent-purple text-center">
+                            <svg class="w-10 h-10 mx-auto mb-3 text-accent-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>
+                            <h2 class="text-2xl font-bold mb-2 text-white">Call Us</h2>
+                            <p class="text-3xl font-extrabold text-accent-pink">
+                                +60 11-3999 1625
+                            </p>
+                            <p class="text-gray-400 mt-2">Monday - Friday: 9:00 AM to 5:00 PM MYT</p>
+                        </div>
+                        
                     </div>
 
                     <button onclick="navigateTo('url')" class="mt-10 cta-gradient text-white font-bold py-3 px-8 rounded-xl shadow-lg transition duration-200">
@@ -416,14 +452,13 @@
                 </div>
             `;
         }
-
-
+        
         function renderEnterURLPage() {
             const isValid = state.urlStatus === 'valid';
             const isInvalid = state.urlStatus === 'invalid';
 
             return `
-                <!-- Abstract Pattern Layer for visual interest (like an Apple background) -->
+                <!-- Abstract Pattern Layer for visual interest -->
                 <div class="abstract-pattern"></div>
                 
                 <div class="text-center md:text-left relative z-20">
@@ -477,22 +512,6 @@
                 });
             };
 
-            const startScan = () => {
-                // Trigger start sound
-                playSound('start');
-                
-                // Prepare the scan log and navigate to the scanning page
-                setState({ 
-                    isScanning: true, 
-                    scanLog: [], 
-                    scanProgress: 0,
-                    reportData: null, // Reset previous report
-                    currentPage: 'scanning', // Navigate immediately
-                });
-                // Start the simulation
-                setTimeout(simulateScan, 500);
-            };
-
             const modules = [
                 { key: 'sqli', title: 'SQL Injection (SQLi)', description: 'Checks for common database vulnerabilities.' },
                 { key: 'xss', title: 'Cross-Site Scripting (XSS)', description: 'Detects client-side script injection flaws.' },
@@ -514,7 +533,7 @@
                                         ${state.scanModules[module.key] ? 'checked' : ''}
                                         onchange="window.toggleModule('${module.key}')" 
                                         class="sr-only peer">
-                                    <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-accent-cyan/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent-pink"></div>
+                                    <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-accent-cyan/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white peer-checked:after:bg-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent-pink"></div>
                                 </label>
                             </div>
                         `).join('')}
@@ -531,6 +550,15 @@
 
         function renderScanningPage() {
             const { scanProgress, scanLog } = state;
+            const logElement = document.getElementById('scan-log-container');
+
+            // Scroll to the bottom of the log container immediately after render
+            if (logElement) {
+                setTimeout(() => {
+                    logElement.scrollTop = logElement.scrollHeight;
+                }, 0);
+            }
+            
             const logHTML = scanLog.map(log => {
                 let icon, color;
                 if (log.includes('Detected') || log.includes('found')) {
@@ -577,7 +605,7 @@
 
         function renderReportPage() {
             const data = state.reportData;
-            if (!data) return '<p class="text-center text-xl text-red-500 mt-20">Error: No report data found.</p>';
+            if (!data) return '<p class="text-center text-xl text-red-500 mt-20">Error: No report data found. Please run a scan first.</p>';
 
             const findingsHTML = data.findings.map(finding => `
                 <div class="bg-bg-card p-6 rounded-xl shadow-lg border-l-4 border-accent-pink/50 mb-6">
@@ -602,52 +630,57 @@
             `).join('');
 
             return `
-                <h1 class="text-4xl md:text-5xl font-extrabold mb-8 text-accent-cyan">SCAN REPORT</h1>
+                <div id="report-content"> <!-- PDF TARGET WRAPPER -->
+                    <h1 class="text-4xl md:text-5xl font-extrabold mb-8 text-accent-cyan">SCAN REPORT</h1>
 
-                <!-- General Info & Summary -->
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
-                    <!-- General Info Card -->
-                    <div class="bg-bg-card p-6 rounded-xl shadow-2xl border-t-4 border-accent-pink lg:col-span-1">
-                        <h2 class="text-xl font-bold mb-4 text-white">General Information</h2>
-                        <p class="text-gray-300"><strong class="text-white">Target URL:</strong> ${data.targetUrl}</p>
-                        <p class="text-gray-300"><strong class="text-white">Scan Date:</strong> ${data.scanDate}</p>
-                        <p class="text-gray-300"><strong class="text-white">Scan Time:</strong> ${data.scanTime}</p>
-                        <p class="text-gray-300 mt-4 text-sm italic">Tool Version: Niqat Al-Daef v1.1</p>
-                    </div>
+                    <!-- General Info & Summary -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
+                        <!-- General Info Card -->
+                        <div class="bg-bg-card p-6 rounded-xl shadow-2xl border-t-4 border-accent-pink lg:col-span-1">
+                            <h2 class="text-xl font-bold mb-4 text-white">General Information</h2>
+                            <p class="text-gray-300"><strong class="text-white">Target URL:</strong> ${data.targetUrl}</p>
+                            <p class="text-gray-300"><strong class="text-white">Scan Date:</strong> ${data.scanDate}</p>
+                            <p class="text-gray-300"><strong class="text-white">Scan Time:</strong> ${data.scanTime}</p>
+                            <p class="text-gray-300 mt-4 text-sm italic">Tool Version: Niqat Al-Daef v1.1 by ALIFFTOTAL</p>
+                        </div>
 
-                    <!-- Summary Card -->
-                    <div class="bg-bg-card p-6 rounded-xl shadow-2xl border-t-4 border-accent-cyan lg:col-span-2">
-                        <h2 class="text-xl font-bold mb-4 text-white">Summary of Findings</h2>
-                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-                            ${[
-                                { label: 'Total Findings', value: data.summary.total, color: 'text-accent-pink' },
-                                { label: 'High Severity', value: data.summary.high, color: 'text-red-500' },
-                                { label: 'Medium Severity', value: data.summary.medium, color: 'text-orange-500' },
-                                { label: 'Low Severity', value: data.summary.low, color: 'text-green-500' },
-                            ].map(item => `
-                                <div class="p-3 bg-gray-900 rounded-lg">
-                                    <p class="text-3xl font-extrabold ${item.color}">${item.value}</p>
-                                    <p class="text-sm text-gray-400 mt-1">${item.label}</p>
-                                </div>
-                            `).join('')}
+                        <!-- Summary Card -->
+                        <div class="bg-bg-card p-6 rounded-xl shadow-2xl border-t-4 border-accent-cyan lg:col-span-2">
+                            <h2 class="text-xl font-bold mb-4 text-white">Summary of Findings</h2>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                                ${[
+                                    { label: 'Total Findings', value: data.summary.total, color: 'text-accent-pink' },
+                                    { label: 'High Severity', value: data.summary.high, color: 'text-red-500' },
+                                    { label: 'Medium Severity', value: data.summary.medium, color: 'text-orange-500' },
+                                    { label: 'Low Severity', value: data.summary.low, color: 'text-green-500' },
+                                ].map(item => `
+                                    <div class="p-3 bg-gray-900 rounded-lg">
+                                        <p class="text-3xl font-extrabold ${item.color}">${item.value}</p>
+                                        <p class="text-sm text-gray-400 mt-1">${item.label}</p>
+                                    </div>
+                                `).join('')}
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <h2 class="text-3xl font-bold mb-6 mt-8 text-white">Vulnerability Details</h2>
-                
-                <!-- Findings List -->
-                <div class="lg:max-w-4xl">
-                    ${findingsHTML}
-                </div>
+                    <h2 class="text-3xl font-bold mb-6 mt-8 text-white">Vulnerability Details</h2>
+                    
+                    <!-- Findings List -->
+                    <div class="lg:max-w-4xl">
+                        ${findingsHTML}
+                    </div>
 
-                <!-- Footer Note -->
-                <div class="bg-accent-purple/30 p-4 rounded-xl text-sm italic text-center mt-12 mb-8 border border-accent-purple">
-                    🛡️ Note: This tool is for educational use only. Scan only your own apps or test environments.
-                </div>
+                    <!-- Footer Note -->
+                    <div class="bg-accent-purple/30 p-4 rounded-xl text-sm italic text-center mt-12 mb-8 border border-accent-purple">
+                        🛡️ Note: This tool is for educational use only. Scan only your own apps or test environments.
+                    </div>
+                </div> <!-- END PDF TARGET WRAPPER -->
 
-                <!-- Next Actions -->
-                <div class="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-6">
+                <!-- Next Actions (HIDDEN ON PDF) -->
+                <div class="hide-on-pdf flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-6 mt-8">
+                    <button onclick="window.downloadReportPdf()" class="bg-accent-cyan hover:bg-accent-cyan/80 text-primary-dark font-bold py-3 px-8 rounded-xl shadow-lg text-lg transition duration-200">
+                        Download Report as PDF
+                    </button>
                     <button onclick="window.navigateTo('url')" class="cta-gradient text-white font-bold py-3 px-8 rounded-xl shadow-lg text-lg transition duration-200">
                         Scan Another URL
                     </button>
@@ -674,18 +707,12 @@
         ];
         
         function simulateScan() {
-            let stepIndex = 0;
-            const logElement = document.getElementById('scan-log-container');
-
             const interval = setInterval(() => {
+                const logElement = document.getElementById('scan-log-container');
+                
                 if (state.scanLog.length < scanSteps.length) {
                     const newLog = scanSteps[state.scanLog.length];
                     
-                    // Trigger sound feedback for important events
-                    if (newLog.includes('XSS found')) {
-                        playSound('vulnerability');
-                    }
-
                     // Add new log entry
                     setState({ scanLog: [...state.scanLog, newLog] });
                     
@@ -695,12 +722,13 @@
 
                     // Scroll to the bottom of the log container
                     if (logElement) {
-                        logElement.scrollTop = logElement.scrollHeight;
+                        setTimeout(() => {
+                            logElement.scrollTop = logElement.scrollHeight;
+                        }, 50); // Small delay to ensure content is rendered
                     }
                 } else {
                     // Simulation complete
                     clearInterval(interval);
-                    playSound('complete'); // Play success sound
                     
                     setState({ 
                         scanProgress: 100, 
@@ -750,6 +778,7 @@
                     content = renderEnterURLPage(); // Default to URL entry
             }
 
+            // Apply the transition class to the main content wrapper
             app.innerHTML = `
                 ${headerHtml}
                 <main class="p-4 md:p-8 rounded-xl relative z-10 page-content-transition">
@@ -757,26 +786,25 @@
                 </main>
             `;
             
-            // Re-bind global functions
+            // Expose utility functions globally for inline HTML event handlers
             window.handleUrlChange = (e) => {
                 state.urlInput = e.target.value;
                 state.urlStatus = 'idle';
-                // Note: Re-render is deferred until a significant action is taken
+                state.isUrlValidated = false; // Reset validation on change
             };
             
             window.handleScanUrl = () => {
                 const url = state.urlInput.trim();
-                const isValidFormat = url.length > 5 && url.includes('.') && url.includes('://');
+                // Simple validation: must have http(s)://, at least one dot, and be long enough
+                const isValidFormat = /^(http|https):\/\/[^ "]+$/.test(url);
 
                 if (isValidFormat) {
-                    setState({ urlStatus: 'valid' });
-                    // Trigger sound on successful link test
-                    playSound('start'); 
+                    setState({ urlStatus: 'valid', isUrlValidated: true });
                     setTimeout(() => navigateTo('configure'), 700);
                 } else if (url.length === 0) {
-                    setState({ urlStatus: 'idle' });
+                    setState({ urlStatus: 'idle', isUrlValidated: false });
                 } else {
-                    setState({ urlStatus: 'invalid' });
+                    setState({ urlStatus: 'invalid', isUrlValidated: false });
                 }
             };
 
@@ -790,34 +818,25 @@
             };
 
             window.startScan = () => {
-                // The actual start sound is now in renderConfigureScanPage, but we keep this stub 
-                // for the inline handler compatibility. The main logic moves to renderConfigureScanPage.
                 if (!state.isScanning) {
                      setState({ 
                         isScanning: true, 
                         scanLog: [], 
                         scanProgress: 0,
                         reportData: null,
+                        currentPage: 'scanning',
                     });
                     setTimeout(simulateScan, 500);
                 }
             };
             
-            // Ensure handleUrlChange updates state correctly on input
-            const urlInput = document.getElementById('url-input');
-            if (urlInput) {
-                urlInput.oninput = (e) => {
-                    state.urlInput = e.target.value;
-                    state.urlStatus = 'idle';
-                };
-            }
+            window.downloadReportPdf = downloadReportPdf;
+            window.navigateTo = navigateTo; // Expose global navigation function
         }
         
         // Initial setup on load
         document.addEventListener('DOMContentLoaded', () => {
             renderApp();
-            // Initialize audio on first load (it will start the context only after a user gesture)
-            initializeAudio(); 
         });
 
     </script>
