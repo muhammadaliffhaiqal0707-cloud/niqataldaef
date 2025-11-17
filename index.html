@@ -63,6 +63,30 @@
     </style>
 </head>
 <body class="text-white">
+
+    <!-- 
+    ******************************************************************
+    * YOUR FIREBASE CONFIGURATION IS NOW COMBINED
+    ******************************************************************
+    -->
+    <script>
+        // STEP 1: Your Firebase Config
+        const firebaseConfig = {
+            apiKey: "AIzaSyCtmtN9L0uoriH5Yl-GZ1pJRDfxakGJuQs",
+            authDomain: "niqat-al-daef-scanner.firebaseapp.com",
+            projectId: "niqat-al-daef-scanner",
+            storageBucket: "niqat-al-daef-scanner.firebasestorage.app",
+            messagingSenderId: "149819724916",
+            appId: "1:149819724916:web:f925b5304cb15a695bad21",
+            measurementId: "G-2L80Y4VBK2"
+        };
+        
+        // STEP 2: Set your default App ID here
+        // This is used for storing data in Firestore and matches your projectId
+        const appId = "niqat-al-daef-scanner"; 
+    </script>
+
+
     <div id="app" class="w-full max-w-7xl px-4 py-8">
         <!-- App content will be rendered here -->
         <div id="loading-spinner" class="text-center text-gray-400">
@@ -74,10 +98,10 @@
     <!-- Firebase Libraries Module Script -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-analytics.js"; // Added Analytics
         import { 
             getAuth, 
             signInAnonymously, 
-            signInWithCustomToken, 
             onAuthStateChanged, 
             signOut,
             createUserWithEmailAndPassword,
@@ -92,18 +116,22 @@
 
         // Expose Firebase modules globally for the main script to use
         window.firebase = {
-            initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, setLogLevel, signOut,
+            initializeApp, getAuth, signInAnonymously, onAuthStateChanged, getFirestore, setLogLevel, signOut,
             createUserWithEmailAndPassword,
             signInWithEmailAndPassword,
             doc,
             setDoc
         };
+        
+        // Expose Analytics
+        window.firebase.getAnalytics = getAnalytics;
     </script>
 
     <!-- Main Application Script -->
     <script>
         // --- Global State & Config ---
-        let app, auth, db, appId, userId;
+        // NOTE: firebaseConfig and appId are now defined in the script tag above
+        let app, auth, db, userId;
 
         let state = {
             authReady: false,
@@ -333,17 +361,15 @@
          */
         function initializeFirebaseAndAuth() {
             try {
-                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-                appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-                if (!firebaseConfig.apiKey) {
-                    throw new Error("Firebase config is missing.");
+                // firebaseConfig is now defined in the global script tag above
+                if (!firebaseConfig || !firebaseConfig.apiKey.includes("AIza")) {
+                    throw new Error("Firebase config is missing or incomplete. Please paste it into the script tag at the top of index.html.");
                 }
 
                 app = window.firebase.initializeApp(firebaseConfig);
                 auth = window.firebase.getAuth(app);
                 db = window.firebase.getFirestore(app);
+                const analytics = window.firebase.getAnalytics(app); // Initialize Analytics
                 window.firebase.setLogLevel('debug');
 
                 window.firebase.onAuthStateChanged(auth, async (user) => {
@@ -357,6 +383,7 @@
                             currentPage: 'start' // Navigate to start page on successful login
                         });
                     } else {
+                        // No user is signed in.
                         setState({
                             authReady: true,
                             isLoggedIn: false,
@@ -366,18 +393,15 @@
                         });
                     }
                 });
-
-                // Sign in with token if provided, otherwise sign in anonymously as fallback
-                if (initialAuthToken) {
-                    window.firebase.signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    window.firebase.signInAnonymously(auth);
-                }
+                
+                // NOTE: We no longer sign in with a token or anonymously here.
+                // The onAuthStateChanged listener will fire, see no user,
+                // and correctly set the page to 'login'.
 
             } catch (error) {
                 console.error("Firebase Init Error:", error);
                 setState({ authReady: true, currentPage: 'login' }); // Show login even if init fails
-                showMessageBox("Initialization Error", "Could not connect to authentication service. " + error.message);
+                showMessageBox("Initialization Error", "Could not connect to Firebase. " + error.message);
             }
         };
 
@@ -385,6 +409,7 @@
          * Saves a new user's profile data (like their name) to a private Firestore document.
          */
         async function saveNewUserProfile(user, fullName) {
+            // appId is now a global variable defined at the top
             if (!db || !user || !fullName) return;
             // Create a doc reference in a private user-specific collection
             const userDocRef = window.firebase.doc(db, `artifacts/${appId}/users/${user.uid}/profile/main`);
