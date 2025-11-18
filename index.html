@@ -104,11 +104,7 @@
 
     <!-- Main Application Container -->
     <div id="app" class="max-w-4xl mx-auto bg-bg-card rounded-xl shadow-2xl p-6 sm:p-10">
-        <!-- Initial Loading State -->
-        <div class="text-center py-20">
-            <div class="w-12 h-12 border-4 border-t-4 border-t-accent-cyan border-gray-700 rounded-full animate-spin mx-auto"></div>
-            <p class="mt-4 text-white">Initializing Secure Environment...</p>
-        </div>
+        <!-- Initial content is empty; JS will inject the loading state immediately -->
     </div>
 
     <!-- Message Box Modal -->
@@ -434,8 +430,9 @@
         async function startScan() {
             const urlToScan = state.urlInput.trim();
             
-            if (!state.userId) {
-                showMessageBox("Authentication Required", "Please log in or wait for the environment to initialize before scanning.");
+            // Wait for Firebase to confirm auth state before allowing scan
+            if (!state.isAuthReady) {
+                showMessageBox("Initialization Incomplete", "Please wait until the secure environment finishes initialization before scanning.");
                 return;
             }
 
@@ -527,8 +524,12 @@
         // --- RENDERING FUNCTIONS ---
         function renderHeader() {
             const userStatus = state.isAuthenticated ? 
-                `<span class="text-accent-cyan font-semibold">User: ${state.user.email || state.userId.substring(0, 8) + '...'}</span>` : 
-                (state.user && state.user.isAnonymous ? `<span class="text-scan-yellow font-semibold">Guest User: ${state.userId.substring(0, 8) + '...'}</span>` : `<span class="text-accent-pink font-semibold">Not Authenticated</span>`);
+                `<span class="text-accent-cyan font-semibold">User: ${state.user.email || state.userId}</span>` : 
+                (state.user && state.user.isAnonymous ? `<span class="text-scan-yellow font-semibold">Guest: ${state.userId}</span>` : `<span class="text-accent-pink font-semibold">Not Authenticated</span>`);
+                
+            // Truncate userId for display only, keep full ID in state
+            const displayUserId = state.userId ? `${state.userId.substring(0, 8)}...` : 'Connecting...';
+
 
             return `
                 <header class="flex justify-between items-center pb-4 border-b border-gray-700/50 mb-6">
@@ -537,7 +538,7 @@
                         <h1 class="text-2xl font-bold text-white">NIQAT Al-Daef</h1>
                     </div>
                     <div class="text-sm text-right">
-                        ${state.isAuthReady ? userStatus : '<span class="text-gray-500">Connecting...</span>'}
+                        ${state.isAuthReady ? userStatus : `<span class="text-gray-500">User ID: ${displayUserId}</span>`}
                         ${state.user ? 
                             `<button onclick="handleLogout()" class="ml-3 text-red-400 hover:text-red-500 transition">Logout</button>` : 
                             (state.isAuthReady ? `<button onclick="navigateTo('auth')" class="ml-3 text-accent-cyan hover:text-cyan-500 transition">Login/Register</button>` : '')}
@@ -915,6 +916,9 @@
              // Now Firebase services are available in window.firebase
              initializeFirebaseAndAuth();
         });
+        
+        // CRITICAL FIX: Render the initial state immediately to show the loading screen and dynamic text
+        renderApp();
         
     </script>
 </body>
