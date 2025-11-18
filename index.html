@@ -21,7 +21,7 @@
                         'accent-cyan': '#00bcd4',
                         'accent-purple': '#8e24aa',
                         'bg-card': '#250841',
-                        'scan-yellow': '#ffeb3b', // Added for scan logs
+                        'scan-yellow': '#ffeb3b', 
                     },
                     fontFamily: {
                         sans: ['Inter', 'sans-serif'],
@@ -75,7 +75,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, query, where, getDocs, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         // --- MANDATORY CANVAS GLOBALS ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -93,7 +93,7 @@
             db, auth, initialAuthToken, appId,
             onAuthStateChanged, signInWithCustomToken, signInAnonymously, signOut,
             createUserWithEmailAndPassword, signInWithEmailAndPassword,
-            doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs,
+            doc, setDoc, onSnapshot, collection, query, where, getDocs,
             orderBy, limit, serverTimestamp
         };
         
@@ -146,46 +146,89 @@
         // --- VIRUSTOTAL API INTEGRATION ---
         const API_KEY = 'cc3c00b8268e5c123e3aa8d11465a10e805bbfacfe7a1a001df8f483504e26c2';
 
+        // Helper function for URL-safe Base64 encoding required by VirusTotal
+        function base64UrlEncode(str) {
+            return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+        }
+
         async function performVirusTotalScan(urlToScan) {
             const headers = { 'x-apikey': API_KEY, 'Content-Type': 'application/x-www-form-urlencoded' };
             const scanData = { url: urlToScan, summary: null, vendor_analysis: [] };
+            
+            // Generate the URL ID using the correct encoding
+            const urlId = base64UrlEncode(urlToScan);
+            const reportUrl = `https://www.virustotal.com/api/v3/urls/${urlId}`;
+            
+            // Small helper for exponential backoff retry
+            async function fetchWithRetry(url, options, maxRetries = 3) {
+                for (let i = 0; i < maxRetries; i++) {
+                    try {
+                        const response = await fetch(url, options);
+                        if (response.status !== 429) { // Not rate-limited, proceed
+                            return response;
+                        }
+                        logScanActivity(`[VT] Rate limit hit (429). Retrying in ${Math.pow(2, i)} seconds...`, 'log-suspicious');
+                        await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000));
+                    } catch (error) {
+                         // Non-HTTP errors (e.g., network down)
+                        if (i < maxRetries - 1) {
+                            logScanActivity(`[VT] Network error. Retrying in ${Math.pow(2, i)} seconds...`, 'log-suspicious');
+                            await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000));
+                        } else {
+                            throw error;
+                        }
+                    }
+                }
+                throw new Error("Maximum retries reached for API call.");
+            }
 
             try {
-                // Step 1: Submit the URL for scanning (This usually primes the cache)
+                // Step 1: Submit the URL for scanning
                 logScanActivity(`[VT] Submitting URL for analysis...`);
-                const submitResponse = await fetch('https://www.virustotal.com/api/v3/urls', {
+                const submitResponse = await fetchWithRetry('https://www.virustotal.com/api/v3/urls', {
                     method: 'POST',
                     headers: headers,
                     body: `url=${encodeURIComponent(urlToScan)}`
                 });
 
                 if (submitResponse.status === 409) {
-                     logScanActivity(`[VT] Analysis already exists or is in progress (Code 409). Proceeding to report retrieval.`, 'log-suspicious');
+                     logScanActivity(`[VT] Analysis already exists or is in progress (Code 409).`, 'log-suspicious');
                 } else if (!submitResponse.ok) {
                     throw new Error(`Submission failed: ${submitResponse.status} - ${submitResponse.statusText}`);
                 }
-
-                // Step 2: Encode URL to get its ID (Base64 URL-safe, strip trailing '=')
-                const urlId = btoa(urlToScan).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-                const reportUrl = `https://www.virustotal.com/api/v3/urls/${urlId}`;
                 
-                // Step 3: Wait and Retrieve the report
-                logScanActivity(`[VT] Waiting 5 seconds for initial report generation...`, 'log-suspicious');
+                // Step 2: Retrieve the report (polling for a few seconds)
+                logScanActivity(`[VT] Waiting 5 seconds for initial report...`, 'log-suspicious');
                 await new Promise(resolve => setTimeout(resolve, 5000)); 
 
-                logScanActivity(`[VT] Retrieving final report...`);
-                const reportResponse = await fetch(reportUrl, { method: 'GET', headers: headers });
-                
-                if (reportResponse.status === 404) {
-                     throw new Error("Report not yet available. The URL may be too new for quick lookup.");
+                let reportResponse;
+                let isReportReady = false;
+                let attempts = 0;
+                const maxAttempts = 5;
+
+                while (!isReportReady && attempts < maxAttempts) {
+                    attempts++;
+                    logScanActivity(`[VT] Attempt ${attempts}/${maxAttempts}: Retrieving report...`);
+                    reportResponse = await fetchWithRetry(reportUrl, { method: 'GET', headers: headers });
+                    
+                    if (reportResponse.status === 200) {
+                        isReportReady = true;
+                        break;
+                    } else if (reportResponse.status === 404) {
+                        logScanActivity(`[VT] Report not yet available. Retrying in 5 seconds...`, 'log-suspicious');
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+                    } else {
+                        throw new Error(`Report retrieval failed: ${reportResponse.status} - ${reportResponse.statusText}`);
+                    }
                 }
-                if (!reportResponse.ok) {
-                    throw new Error(`Report retrieval failed: ${reportResponse.status} - ${reportResponse.statusText}`);
+                
+                if (!isReportReady) {
+                    throw new Error("Failed to retrieve final report after multiple attempts.");
                 }
                 
                 const reportData = await reportResponse.json();
 
-                // Step 4: Extract and format summary stats
+                // Step 3: Extract and format summary stats
                 const attributes = reportData.data.attributes;
                 const stats = attributes.last_analysis_stats || {};
                 const analysisResults = attributes.last_analysis_results || {};
@@ -230,6 +273,7 @@
 
         // --- AUTH & FIREBASE ---
         let db, auth;
+        let unsubscribeHistory = null;
 
         async function initializeFirebaseAndAuth() {
             if (!window.firebase) {
@@ -240,27 +284,38 @@
 
             db = window.firebase.db;
             auth = window.firebase.auth;
+            
+            // Enable Firestore debug logging
+            // const { setLogLevel } = window.firebase; 
+            // setLogLevel('Debug'); // Disabled to keep console clean unless debugging is needed
 
-            // 1. Set up Auth State Listener FIRST
+            // 1. Set up Auth State Listener (Crucial for initialization flow)
             window.firebase.onAuthStateChanged(auth, async (user) => {
                 const newState = {
                     isAuthenticated: !!user && !user.isAnonymous,
                     user: user,
-                    userId: user ? user.uid : null,
-                    isAuthReady: true, // Mark auth check as complete
+                    userId: user ? user.uid : (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2)),
+                    isAuthReady: true, // Mark auth check as complete, regardless of outcome
                 };
                 
-                // Only update the state and render once auth status is known
+                // If authentication changes or completes, update state and history listener
                 updateState(newState);
 
-                if (user) {
-                    // Start listening for scan history only after auth is ready
-                    fetchScanHistory();
+                if (user && !user.isAnonymous) {
+                    fetchScanHistory(user.uid);
                     if (state.currentPage === 'home') {
                         navigateTo('scan'); // Default to scan page if authenticated
                     }
                 } else {
+                    // Clear history listener and state for anonymous/logged out users
+                    if (unsubscribeHistory) {
+                        unsubscribeHistory();
+                        unsubscribeHistory = null;
+                    }
                     updateState({ history: [] });
+                    if (state.currentPage === 'history') {
+                         navigateTo('scan'); // Redirect if the user was on the history page
+                    }
                 }
             });
 
@@ -287,33 +342,47 @@
              return collection(db, 'artifacts', window.firebase.appId, 'users', uid, 'scan_history');
         }
 
-        function fetchScanHistory() {
-            if (!state.userId || !db) return;
+        function fetchScanHistory(uid) {
+            if (!uid || !db) return;
             const { query, orderBy, limit, onSnapshot } = window.firebase;
             
+            // If already subscribed, unsubscribe before creating a new one
+            if (unsubscribeHistory) {
+                unsubscribeHistory();
+            }
+
             const historyQuery = query(
-                getHistoryCollectionRef(state.userId),
-                orderBy('timestamp', 'desc'),
-                limit(10)
+                getHistoryCollectionRef(uid),
+                // Sorting will be done in memory to avoid index errors, but use a small limit
+                // orderBy('timestamp', 'desc'), // REMOVED: Sorting in memory instead
+                limit(20)
             );
 
             // Use onSnapshot for real-time updates
-            onSnapshot(historyQuery, (snapshot) => {
-                const history = snapshot.docs.map(doc => ({
+            unsubscribeHistory = onSnapshot(historyQuery, (snapshot) => {
+                let history = snapshot.docs.map(doc => ({
                     id: doc.id,
                     ...doc.data(),
                     // Convert Firestore Timestamp to Date for display
-                    timestamp: doc.data().timestamp ? doc.data().timestamp.toDate().toLocaleString() : 'N/A'
+                    timestamp: doc.data().timestamp ? doc.data().timestamp.toDate().getTime() : 0, // Get time for sorting
+                    timestampString: doc.data().timestamp ? doc.data().timestamp.toDate().toLocaleString() : 'N/A'
                 }));
+                
+                // Sort history in memory (newest first)
+                history.sort((a, b) => b.timestamp - a.timestamp);
+
                 updateState({ history: history });
             }, (error) => {
                 console.error("Error fetching scan history:", error);
-                logScanActivity("Error fetching history: " + error.message, 'log-malicious');
+                showMessageBox("Database Error", "Error fetching history: " + error.message);
             });
         }
 
         async function saveScanResult(scanResult) {
-            if (!state.userId || !db || !scanResult || auth.currentUser.isAnonymous) return; // Do not save history for anonymous users
+            if (!state.userId || !db || !scanResult || auth.currentUser.isAnonymous) {
+                // Not saving result if user is anonymous or initialization is not complete
+                return; 
+            }
             try {
                 const { addDoc, serverTimestamp } = window.firebase;
                 await addDoc(getHistoryCollectionRef(state.userId), {
@@ -321,7 +390,7 @@
                     summary: scanResult.summary,
                     vendor_analysis: scanResult.vendor_analysis,
                     timestamp: serverTimestamp(),
-                    isMalicious: scanResult.summary.Malicious > 0,
+                    isMalicious: (scanResult.summary && scanResult.summary.Malicious > 0),
                 });
             } catch (e) {
                 console.error("Error saving scan result:", e);
@@ -374,8 +443,7 @@
             const { signOut } = window.firebase;
             try {
                 await signOut(auth);
-                updateState({ history: [] });
-                navigateTo('home');
+                // Auth listener handles state updates and history cleanup
             } catch (e) {
                 showMessageBox("Logout Failed", `Error: ${e.message}`);
             }
@@ -527,8 +595,8 @@
                 `<span class="text-accent-cyan font-semibold">User: ${state.user.email || state.userId}</span>` : 
                 (state.user && state.user.isAnonymous ? `<span class="text-scan-yellow font-semibold">Guest: ${state.userId}</span>` : `<span class="text-accent-pink font-semibold">Not Authenticated</span>`);
                 
-            // Truncate userId for display only, keep full ID in state
-            const displayUserId = state.userId ? `${state.userId.substring(0, 8)}...` : 'Connecting...';
+            // Display the full userId if possible, but keep it readable/scrollable on the UI.
+            const displayUserId = state.userId ? state.userId : 'Connecting...';
 
 
             return `
@@ -537,7 +605,7 @@
                         <svg class="w-8 h-8 text-accent-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944c-1.396 0-2.735.341-3.92.981a11.955 11.955 0 00-4.662 4.662c-.64 1.185-.981 2.524-.981 3.92s.341 2.735.981 3.92a11.955 11.955 0 004.662 4.662c1.185.64 2.524.981 3.92.981a11.955 11.955 0 004.662-4.662c.64-1.185.981-2.524.981-3.92s-.341-2.735-.981-3.92a11.955 11.955 0 00-4.662-4.662z"></path></svg>
                         <h1 class="text-2xl font-bold text-white">NIQAT Al-Daef</h1>
                     </div>
-                    <div class="text-sm text-right">
+                    <div class="text-sm text-right overflow-x-auto whitespace-nowrap">
                         ${state.isAuthReady ? userStatus : `<span class="text-gray-500">User ID: ${displayUserId}</span>`}
                         ${state.user ? 
                             `<button onclick="handleLogout()" class="ml-3 text-red-400 hover:text-red-500 transition">Logout</button>` : 
@@ -555,7 +623,7 @@
             return `
                 <nav class="flex justify-center space-x-3 mb-8 bg-bg-card p-2 rounded-xl shadow-inner">
                     <button onclick="navigateTo('scan')" class="${linkClass('scan')}">New Scan</button>
-                    <button onclick="navigateTo('history')" class="${linkClass('history')}" ${historyDisabled ? 'disabled title="Login to view history"' : ''}>Scan History</button>
+                    <button onclick="navigateTo('history')" class="${linkClass('history')}" ${historyDisabled ? 'disabled' : ''}>Scan History</button>
                     ${!state.isAuthenticated && state.isAuthReady ? `<button onclick="navigateTo('auth')" class="${linkClass('auth')}">Auth</button>` : ''}
                 </nav>
             `;
@@ -826,7 +894,7 @@
                                          onclick="updateState({ scanResults: { url: '${item.url}', summary: ${JSON.stringify(item.summary)}, vendor_analysis: ${JSON.stringify(item.vendor_analysis)} }, currentPage: 'results' })">
                                         <div class="flex justify-between items-center mb-1">
                                             <p class="font-semibold text-white break-all">${item.url}</p>
-                                            <span class="text-xs text-gray-300">${item.timestamp}</span>
+                                            <span class="text-xs text-gray-300">${item.timestampString}</span>
                                         </div>
                                         <p class="text-sm text-gray-400">
                                             Status: 
@@ -909,6 +977,7 @@
         window.handleRegister = handleRegister;
         window.handleGuestLogin = handleGuestLogin;
         window.handleLogout = handleLogout;
+        window.updateState = updateState;
 
 
         // Initial setup listener: Wait for Firebase imports to finish and expose global variables
