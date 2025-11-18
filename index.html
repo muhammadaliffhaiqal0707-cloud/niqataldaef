@@ -96,12 +96,19 @@
             doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs,
             orderBy, limit, serverTimestamp
         };
+        
+        // Notify the main script that Firebase is ready and exposed
+        document.dispatchEvent(new CustomEvent('firebase-ready'));
+
     </script>
 
     <!-- Main Application Container -->
     <div id="app" class="max-w-4xl mx-auto bg-bg-card rounded-xl shadow-2xl p-6 sm:p-10">
-        <!-- Content will be rendered here -->
-        <div class="text-center py-10">Loading Application...</div>
+        <!-- Initial Loading State -->
+        <div class="text-center py-20">
+            <div class="w-12 h-12 border-4 border-t-4 border-t-accent-cyan border-gray-700 rounded-full animate-spin mx-auto"></div>
+            <p class="mt-4 text-white">Initializing Secure Environment...</p>
+        </div>
     </div>
 
     <!-- Message Box Modal -->
@@ -123,7 +130,7 @@
             isAuthenticated: false,
             user: null,
             userId: null,
-            currentPage: 'home', // 'home', 'scan', 'scanning', 'history', 'auth'
+            currentPage: 'home', // 'home', 'scan', 'scanning', 'results', 'history', 'auth'
             urlInput: '',
             selectedModules: {
                 virustotal: true,
@@ -137,18 +144,12 @@
             history: [],
             loginEmail: '',
             loginPassword: '',
-            isAuthReady: false,
+            isAuthReady: false, // Tracks when auth check is complete
         };
         
         // --- VIRUSTOTAL API INTEGRATION ---
-        // !!! SECURITY WARNING: In a production application, this API key MUST NOT be exposed in client-side code.
-        // It must be stored securely on a server, and the client-side code should call a backend endpoint.
         const API_KEY = 'cc3c00b8268e5c123e3aa8d11465a10e805bbfacfe7a1a001df8f483504e26c2';
 
-        /**
-         * Performs the actual VirusTotal URL scan using the public API.
-         * Replaces the Python Flask logic using pure JS fetch API.
-         */
         async function performVirusTotalScan(urlToScan) {
             const headers = { 'x-apikey': API_KEY, 'Content-Type': 'application/x-www-form-urlencoded' };
             const scanData = { url: urlToScan, summary: null, vendor_analysis: [] };
@@ -163,14 +164,12 @@
                 });
 
                 if (submitResponse.status === 409) {
-                     // 409 Conflict means the resource is already being analyzed or is known.
                      logScanActivity(`[VT] Analysis already exists or is in progress (Code 409). Proceeding to report retrieval.`, 'log-suspicious');
                 } else if (!submitResponse.ok) {
                     throw new Error(`Submission failed: ${submitResponse.status} - ${submitResponse.statusText}`);
                 }
 
                 // Step 2: Encode URL to get its ID (Base64 URL-safe, strip trailing '=')
-                // This is the required format for VirusTotal's public API report endpoint
                 const urlId = btoa(urlToScan).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
                 const reportUrl = `https://www.virustotal.com/api/v3/urls/${urlId}`;
                 
@@ -182,7 +181,6 @@
                 const reportResponse = await fetch(reportUrl, { method: 'GET', headers: headers });
                 
                 if (reportResponse.status === 404) {
-                    // This might happen if the URL is very new or never seen
                      throw new Error("Report not yet available. The URL may be too new for quick lookup.");
                 }
                 if (!reportResponse.ok) {
@@ -235,47 +233,55 @@
         }
 
         // --- AUTH & FIREBASE ---
-        let firebaseReady = false;
         let db, auth;
 
         async function initializeFirebaseAndAuth() {
-            if (window.firebase) {
-                db = window.firebase.db;
-                auth = window.firebase.auth;
-                firebaseReady = true;
+            if (!window.firebase) {
+                console.error("Firebase object not found. Cannot initialize.");
+                updateState({ isAuthReady: true });
+                return;
+            }
 
-                // 1. Initial Authentication Check
-                if (window.firebase.initialAuthToken) {
-                    try {
-                        await window.firebase.signInWithCustomToken(auth, window.firebase.initialAuthToken);
-                    } catch (e) {
-                        console.error("Custom token sign-in failed:", e);
-                        await window.firebase.signInAnonymously(auth);
+            db = window.firebase.db;
+            auth = window.firebase.auth;
+
+            // 1. Set up Auth State Listener FIRST
+            window.firebase.onAuthStateChanged(auth, async (user) => {
+                const newState = {
+                    isAuthenticated: !!user && !user.isAnonymous,
+                    user: user,
+                    userId: user ? user.uid : null,
+                    isAuthReady: true, // Mark auth check as complete
+                };
+                
+                // Only update the state and render once auth status is known
+                updateState(newState);
+
+                if (user) {
+                    // Start listening for scan history only after auth is ready
+                    fetchScanHistory();
+                    if (state.currentPage === 'home') {
+                        navigateTo('scan'); // Default to scan page if authenticated
                     }
+                } else {
+                    updateState({ history: [] });
+                }
+            });
+
+            // 2. Initial Sign-in Attempt
+            try {
+                if (window.firebase.initialAuthToken) {
+                    await window.firebase.signInWithCustomToken(auth, window.firebase.initialAuthToken);
                 } else {
                     await window.firebase.signInAnonymously(auth);
                 }
-
-                // 2. Set up Auth State Listener
-                window.firebase.onAuthStateChanged(auth, (user) => {
-                    const newState = {
-                        isAuthenticated: !!user && !user.isAnonymous,
-                        user: user,
-                        userId: user ? user.uid : null,
-                        isAuthReady: true,
-                    };
-                    updateState(newState);
-
-                    if (user) {
-                        // 3. Start listening for scan history only after auth is ready
-                        fetchScanHistory();
-                    } else {
-                        updateState({ history: [] });
-                    }
-                });
-            } else {
-                console.error("Firebase object not found.");
-                updateState({ isAuthReady: true });
+            } catch (e) {
+                console.error("Initial sign-in failed, attempting anonymous fallback:", e);
+                try {
+                    await window.firebase.signInAnonymously(auth);
+                } catch (anonError) {
+                    console.error("Anonymous sign-in failed:", anonError);
+                }
             }
         }
 
@@ -311,7 +317,7 @@
         }
 
         async function saveScanResult(scanResult) {
-            if (!state.userId || !db || !scanResult) return;
+            if (!state.userId || !db || !scanResult || auth.currentUser.isAnonymous) return; // Do not save history for anonymous users
             try {
                 const { addDoc, serverTimestamp } = window.firebase;
                 await addDoc(getHistoryCollectionRef(state.userId), {
@@ -392,6 +398,11 @@
         }
 
         function navigateTo(page) {
+            // If the user is trying to navigate to history but is not authenticated, redirect to auth
+             if (page === 'history' && (!state.userId || auth.currentUser.isAnonymous)) {
+                showMessageBox("Authentication Required", "Please log in with an email/password account to view your scan history.");
+                page = 'auth';
+             }
             updateState({ currentPage: page });
         }
 
@@ -423,9 +434,8 @@
         async function startScan() {
             const urlToScan = state.urlInput.trim();
             
-            if (!state.isAuthenticated && !auth.currentUser.isAnonymous) {
-                showMessageBox("Authentication Required", "Please log in or continue as a guest to perform a scan.");
-                navigateTo('auth');
+            if (!state.userId) {
+                showMessageBox("Authentication Required", "Please log in or wait for the environment to initialize before scanning.");
                 return;
             }
 
@@ -445,20 +455,26 @@
                     currentPage: 'scanning',
                 });
 
-                // --- NEW VIRUSTOTAL INTEGRATION ---
+                // --- VIRUSTOTAL INTEGRATION ---
                 const vtResult = await performVirusTotalScan(urlToScan);
                 
                 if (vtResult.success) {
                     // Update state with final results and save to history
-                    await saveScanResult(vtResult.data);
+                    const fullResult = { ...vtResult.data, url: urlToScan };
+                    
+                    // Save result (only for non-anonymous, will check internally)
+                    await saveScanResult(fullResult);
+                    
                     updateState({
-                        scanResults: vtResult.data,
+                        scanResults: fullResult,
                         isScanning: false,
+                        currentPage: 'results',
                     });
                 } else {
                     // Handle API error
                     updateState({
                         isScanning: false,
+                        currentPage: 'scan',
                         scanLog: [{ timestamp: new Date().toLocaleTimeString(), message: `FATAL ERROR: ${vtResult.error}`, className: 'log-malicious' }, ...state.scanLog],
                     });
                 }
@@ -521,10 +537,10 @@
                         <h1 class="text-2xl font-bold text-white">NIQAT Al-Daef</h1>
                     </div>
                     <div class="text-sm text-right">
-                        ${userStatus}
+                        ${state.isAuthReady ? userStatus : '<span class="text-gray-500">Connecting...</span>'}
                         ${state.user ? 
                             `<button onclick="handleLogout()" class="ml-3 text-red-400 hover:text-red-500 transition">Logout</button>` : 
-                            `<button onclick="navigateTo('auth')" class="ml-3 text-accent-cyan hover:text-cyan-500 transition">Login/Register</button>`}
+                            (state.isAuthReady ? `<button onclick="navigateTo('auth')" class="ml-3 text-accent-cyan hover:text-cyan-500 transition">Login/Register</button>` : '')}
                     </div>
                 </header>
             `;
@@ -532,11 +548,14 @@
 
         function renderNavBar() {
             const linkClass = (page) => `px-4 py-2 rounded-lg font-medium transition duration-200 ${state.currentPage === page ? 'bg-accent-purple text-white shadow-lg' : 'text-gray-300 hover:bg-bg-card'}`;
+            
+            const historyDisabled = !state.userId || (state.user && state.user.isAnonymous);
+            
             return `
                 <nav class="flex justify-center space-x-3 mb-8 bg-bg-card p-2 rounded-xl shadow-inner">
                     <button onclick="navigateTo('scan')" class="${linkClass('scan')}">New Scan</button>
-                    <button onclick="navigateTo('history')" class="${linkClass('history')}" ${!state.userId || state.user.isAnonymous ? 'disabled title="Login to view history"' : ''}>Scan History</button>
-                    ${!state.isAuthenticated ? `<button onclick="navigateTo('auth')" class="${linkClass('auth')}">Auth</button>` : ''}
+                    <button onclick="navigateTo('history')" class="${linkClass('history')}" ${historyDisabled ? 'disabled title="Login to view history"' : ''}>Scan History</button>
+                    ${!state.isAuthenticated && state.isAuthReady ? `<button onclick="navigateTo('auth')" class="${linkClass('auth')}">Auth</button>` : ''}
                 </nav>
             `;
         }
@@ -779,7 +798,7 @@
         }
         
         function renderHistory() {
-             if (!state.userId || state.user.isAnonymous) {
+             if (!state.userId || (state.user && state.user.isAnonymous)) {
                  return `
                     <div class="text-center p-10 bg-bg-card rounded-xl">
                         <h2 class="text-3xl font-bold text-accent-pink mb-4">Access Denied</h2>
@@ -833,6 +852,7 @@
             let contentHTML = '';
 
             if (!state.isAuthReady) {
+                 // Display the loading spinner until isAuthReady is true
                  appElement.innerHTML = `
                     <div class="text-center py-20">
                         <div class="w-12 h-12 border-4 border-t-4 border-t-accent-cyan border-gray-700 rounded-full animate-spin mx-auto"></div>
@@ -843,19 +863,14 @@
                 return;
             }
             
-            // Render the main application frame
+            // Render the main application frame once initialization is complete
             let mainContent = '';
             switch (state.currentPage) {
                 case 'scan':
                     mainContent = renderScanInput();
                     break;
                 case 'scanning':
-                    // If results are available but we are still in 'scanning' view, switch to results
-                    if (state.scanResults && !state.isScanning) {
-                        mainContent = renderResults();
-                    } else {
-                        mainContent = renderScanning();
-                    }
+                    mainContent = renderScanning();
                     break;
                 case 'results':
                     mainContent = renderResults();
@@ -883,16 +898,22 @@
         }
 
 
-        // Initial setup on load
-        document.addEventListener('DOMContentLoaded', () => {
-             // Wait for the window.firebase object to be available from the module script
-            const checkFirebase = setInterval(() => {
-                if (window.firebase) {
-                    clearInterval(checkFirebase);
-                    initializeFirebaseAndAuth();
-                }
-            }, 100);
-            renderApp(); // Render initial loading state
+        // Expose functions to global window object for inline event handlers
+        window.validateUrl = validateUrl;
+        window.toggleModule = toggleModule;
+        window.startScan = startScan;
+        window.downloadReportPdf = downloadReportPdf;
+        window.navigateTo = navigateTo;
+        window.handleLogin = handleLogin;
+        window.handleRegister = handleRegister;
+        window.handleGuestLogin = handleGuestLogin;
+        window.handleLogout = handleLogout;
+
+
+        // Initial setup listener: Wait for Firebase imports to finish and expose global variables
+        document.addEventListener('firebase-ready', () => {
+             // Now Firebase services are available in window.firebase
+             initializeFirebaseAndAuth();
         });
         
     </script>
