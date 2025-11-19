@@ -1,0 +1,106 @@
+app.py(CODE)
+
+
+import base64
+import requests
+import os
+import time
+from flask import Flask, request, jsonify, abort, render_template # <-- MODIFIED: Added render_template
+
+# !!! WARNING: In a production environment, load the API key securely from an environment variable.
+# Example: API_KEY = os.environ.get('VT_API_KEY')
+# NOTE: Replace 'cc3c00b8268e5c123e3aa8d11465a10e805bbfacfe7a1a001df8f483504e26c2' with your actual VirusTotal API key.
+API_KEY = 'cc3c00b8268e5c123e3aa8d11465a10e805bbfacfe7a1a001df8f483504e26c2'
+
+app = Flask(__name__)
+
+def scan_url(url_to_scan):
+    """
+    Performs the VirusTotal URL scan and returns the formatted results data.
+    """
+    headers = {'x-apikey': API_KEY}
+    results = {}
+
+    try:
+        # Step 1: Submit the URL for scanning (Optional, VirusTotal usually caches results)
+        scan_url = 'https://www.virustotal.com/api/v3/urls'
+        data = {'url': url_to_scan}
+        response = requests.post(scan_url, headers=headers, data=data)
+        response.raise_for_status()
+
+        # Step 2: Encode URL to get its ID (VirusTotal URL Identifier)
+        # Note: VirusTotal documentation recommends replacing + with - and / with _
+        url_id = base64.urlsafe_b64encode(url_to_scan.encode()).decode().strip('=')
+        report_url = f'https://www.virustotal.com/api/v3/urls/{url_id}'
+
+        # Step 3: Retrieve the report
+        # We add a small delay to allow the VT backend time to process the scan.
+        time.sleep(5) 
+
+        report_response = requests.get(report_url, headers=headers)
+        report_response.raise_for_status()
+        report_data = report_response.json()
+
+        # Step 4: Extract and format summary stats
+        attributes = report_data['data']['attributes']
+        stats = attributes.get('last_analysis_stats', {})
+        analysis_results = attributes.get('last_analysis_results', {})
+        
+        # Format for display in the template
+        results['url'] = url_to_scan
+        results['summary'] = {
+            'Harmless': stats.get('harmless', 0),
+            'Suspicious': stats.get('suspicious', 0),
+            'Malicious': stats.get('malicious', 0),
+            'Undetected': stats.get('undetected', 0),
+            'Total_Vendors': len(analysis_results)
+        }
+        
+        # Format vendor-specific results
+        vendor_analysis = []
+        for vendor, result in analysis_results.items():
+            vendor_analysis.append({
+                'vendor': vendor,
+                'category': result.get('category', 'N/A'),
+                'result': result.get('result', 'Clean')
+            })
+        results['vendor_analysis'] = vendor_analysis
+
+    except requests.exceptions.RequestException as e:
+        results['error'] = f"Error communicating with VirusTotal API: {e}. Check API key or rate limits or wait for 5 seconds."
+    except Exception as e:
+        results['error'] = f"An unexpected error occurred: {e}"
+
+    return results
+
+# --- FLASK ROUTES ---
+
+# The root path will serve the main HTML client
+@app.route('/')
+def index():
+    """Renders the main input form using the templates folder."""
+    # The fix: Use render_template, and Flask will look in the 'templates' folder.
+    return render_template('index.html') # <-- MODIFIED
+
+@app.route('/scan', methods=['POST'])
+def scan():
+    """Handles the client-side request and returns JSON results."""
+    # Expect JSON data from the client, not form data
+    data = request.get_json()
+    if not data or 'url_to_scan' not in data:
+        return jsonify({"error": "Missing URL parameter"}), 400
+
+    url_to_scan = data['url_to_scan']
+
+    if not url_to_scan:
+        return jsonify({"error": "URL cannot be empty"}), 400
+
+    # Run the VirusTotal scan
+    scan_results = scan_url(url_to_scan)
+
+    # Return the results as JSON
+    return jsonify(scan_results)
+
+# --- START SERVER ---
+if __name__ == '__main__':
+    app.run(debug=True)

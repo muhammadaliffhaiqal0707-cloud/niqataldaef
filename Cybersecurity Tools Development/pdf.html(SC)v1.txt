@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>VirusTotal Scan Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        h1, h2 { color: #333; }
+        .summary-box { border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; background-color: #f9f9f9; }
+        .summary-box p { margin: 5px 0; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #eee; }
+        .malicious { color: red; font-weight: bold; }
+        .harmless { color: green; }
+    </style>
+</head>
+<body>
+
+    <h1>VirusTotal Scan Report</h1>
+    <p><strong>URL Scanned:</strong> {{ results.url }}</p>
+
+    <div class="summary-box">
+        <h2>Scan Summary</h2>
+        <p><strong>Total Vendors:</strong> {{ results.summary.Total_Vendors }}</p>
+        <p><strong>Malicious Detections:</strong> <span class="malicious">{{ results.summary.Malicious }}</span></p>
+        <p><strong>Suspicious Detections:</strong> {{ results.summary.Suspicious }}</p>
+        <p><strong>Harmless Detections:</strong> <span class="harmless">{{ results.summary.Harmless }}</span></p>
+        <p><strong>Undetected:</strong> {{ results.summary.Undetected }}</p>
+    </div>
+
+    <h2>Detailed Vendor Analysis</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Vendor</th>
+                <th>Category</th>
+                <th>Result</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in results.vendor_analysis %}
+            <tr class="{% if item.category == 'malicious' %}malicious{% elif item.category == 'harmless' %}harmless{% endif %}">
+                <td>{{ item.vendor }}</td>
+                <td>{{ item.category | upper }}</td>
+                <td>{{ item.result }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+</body>
+</html>
