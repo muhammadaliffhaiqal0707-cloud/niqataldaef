@@ -1,16 +1,16 @@
-This file contains the UI, uses **JavaScript** to call the Flask backend asynchronously, dynamically renders the scan results, and uses the `html2pdf.js` library to convert the rendered results into a downloadable PDF document via the `downloadReportPdf()` function.
-
-```html:VirusTotal Frontend Client:index.html
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Security Scan Report Generator</title>
+    <title>NIQAT Al-Daef - Security Scanner</title>
+    <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
 
+    <!-- Load html2pdf.js for generating reports -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
+    <!-- Configure Tailwind to use custom colors -->
     <script>
         tailwind.config = {
             theme: {
@@ -19,11 +19,9 @@ This file contains the UI, uses **JavaScript** to call the Flask backend asynchr
                         'primary-dark': '#1e0538',
                         'accent-pink': '#e91e63',
                         'accent-cyan': '#00bcd4',
+                        'accent-purple': '#8e24aa',
                         'bg-card': '#250841',
-                        'scan-yellow': '#ffeb3b',
-                        'safe-green': '#4caf50',
-                        'danger-red': '#f44336',
-                        'warn-orange': '#ff9800',
+                        'scan-yellow': '#ffeb3b', // Added for scan logs
                     },
                     fontFamily: {
                         sans: ['Inter', 'sans-serif'],
@@ -35,332 +33,886 @@ This file contains the UI, uses **JavaScript** to call the Flask backend asynchr
     <style>
         /* Custom background gradient for the body */
         body {
-            background: linear-gradient(135deg, #1e0538 0%, #0c021c 100%);
+            background: linear-gradient(135deg, #1e0538 0%, #0c0214 100%);
             min-height: 100vh;
-            color: #ffffff;
-            font-family: 'Inter', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
-        /* Custom scrollbar for better look in dark mode */
-        ::-webkit-scrollbar {
+        /* Custom scrollbar for log section */
+        #scan-log::-webkit-scrollbar {
             width: 8px;
         }
-        ::-webkit-scrollbar-track {
+        #scan-log::-webkit-scrollbar-track {
             background: #1e0538;
+            border-radius: 10px;
         }
-        ::-webkit-scrollbar-thumb {
+        #scan-log::-webkit-scrollbar-thumb {
+            background: #8e24aa;
+            border-radius: 10px;
+        }
+        #scan-log::-webkit-scrollbar-thumb:hover {
             background: #e91e63;
-            border-radius: 4px;
         }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #00bcd4;
-        }
-        .text-glow {
-            text-shadow: 0 0 5px rgba(0, 188, 212, 0.5);
+        /* Style for the scan log to ensure monospaced look */
+        #scan-log {
+            font-family: monospace;
+            white-space: pre-wrap; /* Allows wrapping */
+            word-wrap: break-word; /* Breaks long strings */
         }
     </style>
 </head>
-<body class="p-4 sm:p-8 flex items-center justify-center">
+<body class="text-white">
 
-    <div id="app" class="w-full max-w-4xl bg-bg-card p-6 sm:p-10 rounded-xl shadow-2xl transition-all duration-300">
-        <h1 class="text-3xl sm:text-4xl font-bold mb-6 text-center text-accent-cyan text-glow">
-            URL Security Scan & Report
-        </h1>
-        <div id="app-content">
-            </div>
-    </div>
+    <!-- 
+    ******************************************************************
+    * YOUR FIREBASE CONFIGURATION IS NOW COMBINED
+    ******************************************************************
+    -->
+    <script>
+        // STEP 1: Your Firebase Config
+        const firebaseConfig = {
+            apiKey: "AIzaSyCtmtN9L0uoriH5Yl-GZ1pJRDfxakGJuQs",
+            authDomain: "niqat-al-daef-scanner.firebaseapp.com",
+            projectId: "niqat-al-daef-scanner",
+            storageBucket: "niqat-al-daef-scanner.firebasestorage.app",
+            messagingSenderId: "149819724916",
+            appId: "1:149819724916:web:f925b5304cb15a695bad21",
+            measurementId: "G-2L80Y4VBK2"
+        };
+        
+        // STEP 2: Set your default App ID here
+        // This is used for storing data in Firestore and matches your projectId
+        const appId = "niqat-al-daef-scanner"; 
+    </script>
 
-    <div id="message-box-modal" class="fixed inset-0 bg-black bg-opacity-70 hidden items-center justify-center z-50">
-        <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full">
-            <h3 id="message-box-title" class="text-xl font-semibold mb-3 text-primary-dark"></h3>
-            <p id="message-box-text" class="text-gray-700 mb-6"></p>
-            <button onclick="hideMessageBox()" class="w-full bg-accent-pink text-white py-2 rounded-lg hover:bg-opacity-90 transition duration-150">
-                OK
-            </button>
+
+    <div id="app" class="w-full max-w-7xl px-4 py-8">
+        <!-- App content will be rendered here -->
+        <div id="loading-spinner" class="text-center text-gray-400">
+            <h1 class="text-4xl font-extrabold text-accent-cyan animate-pulse">NIQAT Al-Daef</h1>
+            <p class="text-gray-400 mt-4">Securing connection and preparing environment...</p>
         </div>
     </div>
 
-    <script>
+    <!-- Firebase Libraries Module Script -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-analytics.js"; // Added Analytics
+        import { 
+            getAuth, 
+            signInAnonymously, 
+            onAuthStateChanged, 
+            signOut,
+            createUserWithEmailAndPassword,
+            signInWithEmailAndPassword
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            setLogLevel,
+            doc,
+            setDoc
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Expose Firebase modules globally for the main script to use
+        window.firebase = {
+            initializeApp, getAuth, signInAnonymously, onAuthStateChanged, getFirestore, setLogLevel, signOut,
+            createUserWithEmailAndPassword,
+            signInWithEmailAndPassword,
+            doc,
+            setDoc
+        };
         
-        // --- Application State Management ---
-        const appState = {
-            currentPage: 'input', // 'input', 'scanning', 'results'
-            urlToScan: '',
-            scanResults: null,
-            error: null,
+        // Expose Analytics
+        window.firebase.getAnalytics = getAnalytics;
+    </script>
+
+    <!-- Main Application Script -->
+    <script>
+        // --- Global State & Config ---
+        // NOTE: firebaseConfig and appId are now defined in the script tag above
+        let app, auth, db, userId;
+
+        let state = {
+            authReady: false,
+            isLoggedIn: false,
+            authMode: 'guest', // 'guest', 'user'
+            userId: null,
+            userProfile: { fullName: 'Guest' },
+            currentPage: 'start', // 'login', 'register', 'start', 'configure', 'scanning', 'report'
+            url: '',
+            urlStatus: 'idle', // 'idle', 'valid', 'invalid'
+            isUrlValidated: false,
+            scanModules: {
+                sqlInjection: true,
+                xss: true,
+                httpsHeader: true // Changed from securityMisconfiguration
+            },
+            isScanning: false,
+            scanProgress: 0,
+            scanLog: [],
+            maxLogLines: 100, // Limit log lines to prevent performance issues
+            reportData: null
         };
 
-        // --- Utility Functions ---
+        // NEW: Added a mapping for display names
+        const moduleDisplayNames = {
+            sqlInjection: "SQL Injection (SQLi)",
+            xss: "Cross-Site Scripting (XSS)",
+            httpsHeader: "Insecure HTTP Headers"
+        };
 
-        function showMessageBox(title, message) {
-            document.getElementById('message-box-title').textContent = title;
-            document.getElementById('message-box-text').textContent = message;
-            document.getElementById('message-box-modal').classList.remove('hidden');
-            document.getElementById('message-box-modal').classList.add('flex');
-        }
-
-        function hideMessageBox() {
-            document.getElementById('message-box-modal').classList.remove('flex');
-            document.getElementById('message-box-modal').classList.add('hidden');
-        }
-
-        function validateUrl(url) {
-            try {
-                new URL(url);
-                return true;
-            } catch {
-                return false;
-            }
-        }
-
-        // --- Scan Handler (Communicates with Flask Backend) ---
+        // --- Core Functions (Global Scope) ---
+        // Converted all functions to standard declarations for robust hoisting.
 
         /**
-         * Initiates the scan by posting the URL to the Flask backend's /scan endpoint.
+         * Updates the global state and triggers a re-render of the UI.
          */
-        async function startScan() {
-            const urlInput = document.getElementById('url_to_scan');
-            const url = urlInput ? urlInput.value.trim() : '';
+        function setState(newState) {
+            state = { ...state, ...newState };
+            renderApp();
+        };
 
-            if (!url || !validateUrl(url)) {
-                showMessageBox("Validation Error", "Please enter a valid URL (e.g., https://example.com).");
+        /**
+         * Navigates to a different page in the application.
+         */
+        function navigateTo(page) {
+            // Security check: Don't allow navigation to main app if not logged in
+            if (!state.isLoggedIn && page !== 'login' && page !== 'register') {
+                setState({ currentPage: 'login' });
+                return;
+            }
+            // Logic check: Don't allow navigation to configure if URL isn't valid
+            if (page === 'configure' && !state.isUrlValidated) {
+                return;
+            }
+            setState({ currentPage: page });
+        };
+
+        /**
+         * Creates and displays a simple modal alert box.
+         */
+        function showMessageBox(title, message) {
+            let modal = document.getElementById('message-box');
+            if (modal) modal.remove(); // Remove existing modal first
+
+            modal = document.createElement('div');
+            modal.id = 'message-box';
+            modal.className = 'fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-bg-card p-6 rounded-xl shadow-2xl border border-accent-purple w-11/12 max-w-md">
+                    <h2 class="text-2xl font-bold text-accent-cyan mb-4">${title}</h2>
+                    <p class="text-gray-300 mb-6">${message}</p>
+                    <button id="message-box-close" class="w-full py-2 bg-accent-pink text-white font-semibold rounded-lg hover:bg-opacity-90">
+                        Close
+                    </button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            document.getElementById('message-box-close').onclick = () => modal.remove();
+        };
+
+        /**
+         * Simulates a scan, updating progress and logs.
+         */
+        function simulateScan() {
+            let progress = 0;
+            const selectedModules = Object.keys(state.scanModules).filter(k => state.scanModules[k]);
+            const totalSteps = selectedModules.length * 3 + 2; // 3 steps per module + start/finish
+            let currentStep = 0;
+
+            const addLog = (text, type = 'info') => {
+                const time = new Date().toLocaleTimeString();
+                const newLog = { time, text, type };
+                
+                // Add new log and manage log line limit
+                // Note: Must use the function-based setState to get the latest state
+                // This is a placeholder as setState is simple merge
+                const updatedLog = [...state.scanLog, newLog];
+                if (updatedLog.length > state.maxLogLines) {
+                    updatedLog.shift(); // Remove the oldest log entry
+                }
+
+                setState({ scanLog: updatedLog });
+            };
+
+            const updateProgress = () => {
+                currentStep++;
+                progress = Math.min(100, Math.floor((currentStep / totalSteps) * 100));
+                setState({ scanProgress: progress });
+            };
+
+            addLog('Scan Engine Initialized. Target: ' + state.url, 'success');
+            updateProgress();
+
+            const moduleInterval = setInterval(() => {
+                if (selectedModules.length > 0) {
+                    const module = selectedModules.shift(); // Process one module
+                    const moduleName = module.split(/(?=[A-Z])/).join(' ');
+                    
+                    addLog(`--- Starting Module: ${moduleName} ---`, 'module');
+                    updateProgress();
+                    
+                    setTimeout(() => {
+                        addLog(`[${moduleName}] Analyzing entry points...`);
+                        updateProgress();
+                    }, 500);
+                    
+                    setTimeout(() => {
+                        addLog(`[${moduleName}] Fuzzing parameters...`, Math.random() < 0.2 ? 'error' : 'info');
+                        updateProgress();
+                    }, 1000);
+
+                } else {
+                    // All modules done
+                    clearInterval(moduleInterval);
+                    addLog('--- Scan Finished. Compiling report... ---', 'success');
+                    updateProgress();
+                    
+                    // Generate report
+                    setTimeout(() => {
+                        generateReport();
+                        setState({ isScanning: false });
+                        navigateTo('report');
+                    }, 1500);
+                }
+            }, 1200); // Time per module
+        };
+
+        /**
+         * Generates a final (simulated) report based on selected modules.
+         */
+        function generateReport() {
+            let reportResults = [];
+            let totalVulnerabilities = 0;
+
+            const baseResults = {
+                sqlInjection: { name: 'SQL Injection', severity: 'High', status: 'VULNERABLE', description: 'Found 2 potential SQLi vulnerabilities in login and search parameters.', recommendation: 'Use parameterized queries (prepared statements) to prevent database injection.' },
+                xss: { name: 'Cross-Site Scripting (XSS)', severity: 'Medium', status: 'VULNERABLE', description: 'Reflected XSS found in 3 parameters. User input is not properly sanitized.', recommendation: 'Implement context-aware output encoding for all user-supplied data.' },
+                httpsHeader: { name: 'Insecure HTTP Headers', severity: 'Low', status: 'POOR', score: 65, description: 'Server is exposing version headers (Apache/2.4.1). Missing Content-Security-Policy header.', recommendation: 'Remove server version banners and implement a strict CSP.' }
+            };
+
+            // Randomly decide which selected modules find something
+            Object.keys(state.scanModules).forEach(key => {
+                if (state.scanModules[key] && Math.random() < 0.7) { // 70% chance to "find" something
+                    reportResults.push(baseResults[key]);
+                    if (baseResults[key].status.includes('VULNERABLE') || baseResults[key].status.includes('POOR')) {
+                        totalVulnerabilities++;
+                    }
+                }
+            });
+
+            const overall = totalVulnerabilities > 1 ? 'VULNERABLE' : totalVulnerabilities === 1 ? 'WARNING' : 'SAFE';
+            const severity = totalVulnerabilities > 1 ? 'CRITICAL' : totalVulnerabilities === 1 ? 'WARNING' : 'SAFE';
+
+            setState({
+                reportData: {
+                    targetUrl: state.url,
+                    timestamp: new Date().toLocaleString(),
+                    overallStatus: overall,
+                    overallSeverity: severity,
+                    totalVulnerabilities: totalVulnerabilities,
+                    results: reportResults
+                }
+            });
+        };
+
+        /**
+         * Downloads the report as a PDF.
+         */
+        function downloadReportPdf() {
+            // Check if user is a guest
+            if (state.authMode === 'guest') {
+                showMessageBox("Feature Locked", "Please register for a free account to download PDF reports.");
                 return;
             }
 
-            // 1. Update state to loading
-            appState.urlToScan = url;
-            appState.currentPage = 'scanning';
-            appState.error = null;
-            renderApp();
-
-            try {
-                // 2. Make the POST request to the Flask API
-                const response = await fetch('/scan', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ url_to_scan: url }),
-                });
-
-                // 3. Handle non-OK response codes
-                if (!response.ok) {
-                    const errorJson = await response.json();
-                    throw new Error(errorJson.error || `Server responded with status ${response.status}`);
-                }
-                
-                // 4. Parse the JSON result
-                const scanResults = await response.json();
-
-                // 5. Update state with results
-                if (scanResults.error) {
-                    appState.error = scanResults.error;
-                } else {
-                    appState.scanResults = scanResults;
-                }
-                
-            } catch (e) {
-                console.error("Scan Error:", e);
-                // Catch network or parsing errors
-                appState.error = `Connection Error: Failed to fetch report from the backend. Ensure the Python server is running. Details: ${e.message}`;
+            const reportContainer = document.getElementById('report-content-container');
+            if (!reportContainer) {
+                showMessageBox("Error", "Could not find report content to download.");
+                return;
             }
 
-            // 6. Navigate to results page
-            appState.currentPage = 'results';
-            renderApp();
-        }
+            // Temporarily set background to white for PDF generation
+            reportContainer.style.backgroundColor = '#ffffff';
+            reportContainer.style.color = '#000000';
+            
+            // Apply text color to children elements
+            reportContainer.querySelectorAll('*').forEach(el => {
+                el.style.color = '#000000';
+            });
 
-
-        /**
-         * Generates and downloads the PDF report of the scan results.
-         */
-        function downloadReportPdf() {
-            const element = document.getElementById('report-content');
-            if (!element) return;
-
-            // Configuration for html2pdf
-            const opt = {
-                margin: 10,
-                filename: `VT_Report_${new Date().toISOString().slice(0, 10)}.pdf`,
+            const options = {
+                margin: 0.5,
+                filename: `NIQAT_Report_${state.url.replace(/[^a-z0-9]/gi, '_')}.pdf`,
                 image: { type: 'jpeg', quality: 0.98 },
-                html2canvas: { 
-                    scale: 2, 
-                    logging: true, 
-                    useCORS: true, 
-                    scrollY: 0,
-                    // Fixes background colors in PDF
-                    onrendered: function(canvas) {
-                        const ctx = canvas.getContext('2d');
-                        ctx.fillStyle = "#1e0538"; // Set a solid dark background for the PDF page
-                        ctx.fillRect(0, 0, canvas.width, canvas.height);
-                    }
-                },
-                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                html2canvas: { scale: 2, backgroundColor: '#ffffff' },
+                jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
             };
 
-            // Use html2pdf to generate and download
-            html2pdf().from(element).set(opt).save();
-            showMessageBox("Download Started", "Your PDF report download should begin shortly.");
-        }
+            html2pdf().from(reportContainer).set(options).save().then(() => {
+                // Restore original styles after PDF generation
+                reportContainer.style.backgroundColor = ''; // Reverts to CSS style
+                reportContainer.style.color = '';
+                reportContainer.querySelectorAll('*').forEach(el => {
+                    el.style.color = '';
+                });
+            });
+        };
 
-        // --- Rendering Functions ---
-
-        /**
-         * Renders the input screen for URL submission.
-         */
-        function renderInput() {
-            return `
-                <div class="space-y-6">
-                    <p class="text-lg text-gray-300 text-center">Enter a URL to scan it against the VirusTotal database for potential threats.</p>
-                    
-                    <div class="flex flex-col sm:flex-row gap-4">
-                        <input
-                            type="url"
-                            id="url_to_scan"
-                            placeholder="e.g., https://malicious-site.com"
-                            class="flex-grow p-3 rounded-lg border-2 border-accent-cyan bg-bg-card focus:ring-accent-pink focus:border-accent-pink text-white placeholder-gray-500"
-                            value="${appState.urlToScan}"
-                        />
-                        <button 
-                            onclick="startScan()"
-                            class="w-full sm:w-auto px-6 py-3 rounded-lg font-semibold bg-accent-pink hover:bg-opacity-80 transition duration-150 shadow-lg shadow-accent-pink/40"
-                        >
-                            Start Scan
-                        </button>
-                    </div>
-                </div>
-            `;
-        }
+        // --- Firebase Auth Functions ---
 
         /**
-         * Renders the scanning/loading screen.
+         * Initializes Firebase and sets up the auth state listener.
          */
-        function renderScanning() {
-            return `
-                <div class="flex flex-col items-center justify-center p-12 text-center">
-                    <div class="animate-spin rounded-full h-16 w-16 border-b-4 border-accent-cyan mb-6"></div>
-                    <p class="text-xl font-semibold mb-3">Scanning In Progress...</p>
-                    <p class="text-gray-400">URL: <span class="text-scan-yellow break-all">${appState.urlToScan}</span></p>
-                    <p class="text-sm text-gray-500 mt-2">Connecting to VirusTotal via Flask backend. This may take up to 5 seconds.</p>
-                </div>
-            `;
-        }
+        function initializeFirebaseAndAuth() {
+            try {
+                // firebaseConfig is now defined in the global script tag above
+                if (!firebaseConfig || !firebaseConfig.apiKey.includes("AIza")) {
+                    throw new Error("Firebase config is missing or incomplete. Please paste it into the script tag at the top of index.html.");
+                }
+
+                app = window.firebase.initializeApp(firebaseConfig);
+                auth = window.firebase.getAuth(app);
+                db = window.firebase.getFirestore(app);
+                const analytics = window.firebase.getAnalytics(app); // Initialize Analytics
+                window.firebase.setLogLevel('debug');
+
+                window.firebase.onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid; // Set global userId
+                        setState({
+                            authReady: true,
+                            isLoggedIn: true,
+                            userId: user.uid,
+                            authMode: user.isAnonymous ? 'guest' : 'user',
+                            currentPage: 'start' // Navigate to start page on successful login
+                        });
+                    } else {
+                        // No user is signed in.
+                        setState({
+                            authReady: true,
+                            isLoggedIn: false,
+                            userId: null,
+                            authMode: 'guest',
+                            currentPage: 'login' // Show login page if no user
+                        });
+                    }
+                });
+                
+                // NOTE: We no longer sign in with a token or anonymously here.
+                // The onAuthStateChanged listener will fire, see no user,
+                // and correctly set the page to 'login'.
+
+            } catch (error) {
+                console.error("Firebase Init Error:", error);
+                setState({ authReady: true, currentPage: 'login' }); // Show login even if init fails
+                showMessageBox("Initialization Error", "Could not connect to Firebase. " + error.message);
+            }
+        };
 
         /**
-         * Renders the final results page, including the download button.
+         * Saves a new user's profile data (like their name) to a private Firestore document.
          */
-        function renderResults() {
-            const { scanResults, error, urlToScan } = appState;
+        async function saveNewUserProfile(user, fullName) {
+            // appId is now a global variable defined at the top
+            if (!db || !user || !fullName) return;
+            // Create a doc reference in a private user-specific collection
+            const userDocRef = window.firebase.doc(db, `artifacts/${appId}/users/${user.uid}/profile/main`);
+            try {
+                await window.firebase.setDoc(userDocRef, {
+                    fullName: fullName,
+                    email: user.email,
+                    registrationDate: new Date().toISOString()
+                });
+                console.log(`[Firestore] User profile saved for ${user.uid}`);
+            } catch (error) {
+                console.error("[Firestore] Error saving user profile:", error);
+                // Don't block login if this fails, just log it
+            }
+        };
 
-            if (error) {
-                return `
-                    <div class="text-center p-8 bg-danger-red/20 rounded-lg border border-danger-red">
-                        <h2 class="text-2xl font-bold mb-4 text-danger-red">Scan Failed</h2>
-                        <p class="text-lg text-red-300 break-all">URL: ${urlToScan}</p>
-                        <p class="mt-4 text-red-200">${error}</p>
-                        <button 
-                            onclick="appState.currentPage = 'input'; renderApp();"
-                            class="mt-6 px-6 py-2 rounded-lg font-semibold bg-accent-pink hover:bg-opacity-80 transition duration-150"
-                        >
-                            Try Another Scan
-                        </button>
-                    </div>
-                `;
+        /**
+         * Handles user login with email and password.
+         */
+        async function handleLogin() {
+            const email = document.getElementById('auth-email')?.value;
+            const password = document.getElementById('auth-password')?.value;
+            if (!email || !password) {
+                return showMessageBox("Login Error", "Email and Password are required.");
             }
 
-            const { summary, vendor_analysis } = scanResults;
-            const maliciousCount = summary.Malicious;
-            const colorClass = maliciousCount > 0 ? 'bg-danger-red/10 border-danger-red' : (summary.Suspicious > 0 ? 'bg-warn-orange/10 border-warn-orange' : 'bg-safe-green/10 border-safe-green');
-            const statusText = maliciousCount > 0 ? 'MALICIOUS' : (summary.Suspicious > 0 ? 'SUSPICIOUS' : 'HARMLESS');
-            const statusColor = maliciousCount > 0 ? 'text-danger-red' : (summary.Suspicious > 0 ? 'text-warn-orange' : 'text-safe-green');
+            try {
+                await window.firebase.signInWithEmailAndPassword(auth, email, password);
+                // onAuthStateChanged will handle navigation
+            } catch (error) {
+                console.error("Login Error:", error.code);
+                let msg = "Login failed. Please check your credentials.";
+                if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+                    msg = "Invalid email or password.";
+                }
+                showMessageBox("Login Failed", msg);
+            }
+        };
 
-            // The 'report-content' div is what html2pdf will capture for the PDF.
+        /**
+         * Handles new user registration.
+         */
+        async function handleRegister() {
+            const fullName = document.getElementById('auth-fullname')?.value;
+            const email = document.getElementById('auth-email')?.value;
+            const password = document.getElementById('auth-password')?.value;
+
+            if (!fullName || !email || !password) {
+                return showMessageBox("Registration Error", "Full Name, Email, and Password are required.");
+            }
+            if (password.length < 6) {
+                return showMessageBox("Registration Error", "Password must be at least 6 characters long.");
+            }
+
+            try {
+                const userCredential = await window.firebase.createUserWithEmailAndPassword(auth, email, password);
+                // Save the user's full name to Firestore
+                if (userCredential.user) {
+                    await saveNewUserProfile(userCredential.user, fullName);
+                }
+                // onAuthStateChanged will handle navigation
+            } catch (error) {
+                console.error("Registration Error:", error.code);
+                let msg = "An unknown error occurred.";
+                if (error.code === 'auth/email-already-in-use') {
+                    msg = "This email address is already registered.";
+                } else if (error.code === 'auth/invalid-email') {
+                    msg = "That is not a valid email address.";
+                }
+                showMessageBox("Registration Failed", msg);
+            }
+        };
+        
+        /**
+         * Handles signing in as a guest (anonymous).
+         */
+        async function handleGuestLogin() {
+            try {
+                await window.firebase.signInAnonymously(auth);
+                // onAuthStateChanged will handle navigation
+            } catch (error) {
+                console.error("Guest Login Error:", error);
+                showMessageBox("Guest Login Failed", "Could not sign in as guest. " + error.message);
+            }
+        };
+
+        /**
+         * Handles user logout.
+         */
+        async function handleLogout() {
+            try {
+                await window.firebase.signOut(auth);
+                // onAuthStateChanged will handle navigation to login page
+            } catch (error) {
+                console.error("Sign Out Error:", error);
+                showMessageBox("Error", "Could not sign out. " + error.message);
+            }
+        };
+
+        // --- View Rendering Functions ---
+
+        /**
+         * Renders the Login or Register form.
+         */
+        function renderAuthForm(isLogin = true) {
+            const title = isLogin ? 'Log In' : 'Register';
+            const actionText = isLogin ? 'Log In' : 'Create Account';
+            const alternateText = isLogin ? "Don't have an account?" : "Already have an account?";
+            const actionHandler = isLogin ? 'handleLogin()' : 'handleRegister()';
+
             return `
-                <div class="space-y-8">
-                    <div id="report-content" class="p-4 sm:p-6 bg-bg-card rounded-lg shadow-inner">
-                        <h2 class="text-2xl font-bold mb-6 text-accent-cyan border-b border-accent-cyan/50 pb-2">
-                            Security Scan Report
-                        </h2>
-                        
-                        <div class="mb-6 p-4 rounded-lg ${colorClass} transition-all duration-300">
-                            <p class="text-lg font-light mb-1 text-gray-300">Scanned URL:</p>
-                            <p class="text-xl font-medium break-all text-scan-yellow mb-4">${urlToScan}</p>
-                            <div class="text-center">
-                                <span class="text-3xl font-extrabold ${statusColor}">${statusText}</span>
-                            </div>
-                            <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-                                ${Object.entries(summary).map(([key, value]) => `
-                                    <div class="p-2 bg-primary-dark rounded-lg">
-                                        <p class="text-2xl font-bold ${key === 'Malicious' ? 'text-danger-red' : (key === 'Suspicious' ? 'text-warn-orange' : 'text-safe-green')}">${value}</p>
-                                        <p class="text-xs text-gray-400 mt-1">${key.replace('_', ' ')}</p>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        </div>
+                <div class="max-w-md mx-auto bg-bg-card p-8 rounded-2xl shadow-2xl border border-accent-cyan/20 transform hover:scale-[1.01] transition duration-500">
+                    <h1 class="text-4xl font-extrabold text-center text-accent-cyan mb-2">NIQAT Al-Daef</h1>
+                    <p class="text-center text-gray-400 mb-8">${title}</p>
 
-                        <h3 class="text-xl font-bold mt-8 mb-4 border-b border-gray-600 pb-1">Vendor Analysis (${summary.Total_Vendors} Engines)</h3>
-                        <div class="space-y-2 max-h-96 overflow-y-auto pr-2">
-                            ${vendor_analysis.map(analysis => `
-                                <div class="flex justify-between items-center p-3 bg-primary-dark rounded-lg hover:bg-primary-dark/80 transition duration-100">
-                                    <span class="font-medium w-1/3 text-gray-300">${analysis.vendor}</span>
-                                    <span class="font-light w-1/3 text-center text-sm text-accent-cyan">${analysis.category}</span>
-                                    <span class="font-bold w-1/3 text-right text-sm ${analysis.result.toLowerCase() === 'clean' || analysis.result.toLowerCase() === 'harmless' || analysis.result.toLowerCase() === 'undetected' ? 'text-safe-green' : 'text-danger-red'}">
-                                        ${analysis.result}
-                                    </span>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-                    
-                    <div class="flex flex-col sm:flex-row justify-center gap-4 pt-6 border-t border-gray-700">
-                        <button 
-                            onclick="downloadReportPdf()"
-                            class="px-8 py-3 rounded-lg font-semibold bg-accent-cyan text-primary-dark hover:bg-opacity-80 transition duration-150 shadow-lg shadow-accent-cyan/40"
-                        >
-                            Download PDF Report
+                    <form onsubmit="event.preventDefault(); ${actionHandler};" class="space-y-6">
+                        ${!isLogin ? `
+                            <input type="text" id="auth-fullname" placeholder="Full Name" required
+                                   class="w-full p-4 bg-primary-dark border-2 border-accent-purple rounded-lg text-white placeholder-gray-500 focus:ring-accent-pink focus:border-accent-pink transition duration-300">
+                        ` : ''}
+                        <input type="email" id="auth-email" placeholder="Email Address" required
+                               class="w-full p-4 bg-primary-dark border-2 border-accent-purple rounded-lg text-white placeholder-gray-500 focus:ring-accent-pink focus:border-accent-pink transition duration-300">
+                        <input type="password" id="auth-password" placeholder="Password" required
+                               class="w-full p-4 bg-primary-dark border-2 border-accent-purple rounded-lg text-white placeholder-gray-500 focus:ring-accent-pink focus:border-accent-pink transition duration-300">
+                        
+                        <button type="submit"
+                            class="w-full py-4 text-xl font-bold rounded-lg shadow-xl transition duration-300 bg-accent-pink hover:bg-opacity-90 text-white transform hover:scale-[1.02] focus:ring-4 focus:ring-accent-pink focus:ring-opacity-50">
+                            ${actionText}
                         </button>
-                        <button 
-                            onclick="appState.currentPage = 'input'; renderApp();"
-                            class="px-8 py-3 rounded-lg font-semibold border-2 border-accent-pink text-accent-pink hover:bg-accent-pink hover:text-white transition duration-150"
-                        >
-                            New Scan
+                    </form>
+
+                    <div class="mt-6 text-center">
+                        <p class="text-gray-400">${alternateText} 
+                            <a href="#" onclick="event.preventDefault(); navigateTo('${isLogin ? 'register' : 'login'}')" 
+                               class="text-accent-cyan font-semibold hover:text-accent-pink transition duration-200">
+                                ${isLogin ? 'Register' : 'Log In'}
+                            </a>
+                        </p>
+                    </div>
+
+                    <div class="mt-8 border-t border-gray-700 pt-6">
+                        <button onclick="handleGuestLogin()"
+                            class="w-full py-3 bg-accent-purple text-white font-semibold rounded-lg shadow-md hover:bg-opacity-90 transition duration-300 focus:ring-4 focus:ring-accent-purple focus:ring-opacity-50 flex items-center justify-center space-x-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM12 14v4l-3-3m-3-3h-2a2 2 0 00-2 2v4a2 2 0 002 2h6a2 2 0 002-2v-4a2 2 0 00-2-2h-2"></path></svg>
+                            <span>Continue as Guest</span>
                         </button>
                     </div>
                 </div>
             `;
-        }
+        };
+        
+        /**
+         * Generates the HTML for the report view.
+         */
+        function generateReportView(data) {
+            if (!data) return '';
+
+            const statusColor = (status) => {
+                switch (status) {
+                    case 'CRITICAL': return 'bg-red-700';
+                    case 'WARNING': return 'bg-yellow-600';
+                    case 'SAFE': return 'bg-green-600';
+                    case 'VULNERABLE': return 'text-red-400';
+                    case 'CLEAN': return 'text-green-400';
+                    case 'EXCELLENT': return 'text-green-400';
+                    case 'GOOD': return 'text-yellow-400';
+                    case 'POOR': return 'text-red-400';
+                    default: return 'bg-gray-500';
+                }
+            };
+
+            const severityBadge = (severity) => {
+                switch (severity) {
+                    case 'High': return 'bg-red-500';
+                    case 'Medium': return 'bg-yellow-500 text-black'; // Yellow needs dark text
+                    case 'Low': return 'bg-green-500';
+                    default: return 'bg-gray-500';
+                }
+            };
+
+            const resultsHtml = data.results.length > 0 ? data.results.map(result => `
+                <div class="border-t border-accent-purple pt-4 mt-4">
+                    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between">
+                        <h3 class="text-xl font-semibold text-accent-cyan">${result.name}</h3>
+                        <span class="text-sm font-medium ${statusColor(result.status)} mt-2 sm:mt-0 px-2 py-1 rounded">${result.status}${result.score !== undefined ? ` (${result.score}/100)` : ''}</span>
+                    </div>
+                    <div class="flex items-center space-x-2 text-sm mt-2">
+                        <span class="font-bold">Severity:</span>
+                        <span class="px-2 py-0.5 text-xs font-semibold rounded-full ${severityBadge(result.severity)}">${result.severity}</span>
+                    </div>
+                    <p class="text-gray-300 mt-2">${result.description}</p>
+                    <p class="text-accent-pink mt-1 italic">Recommendation: ${result.recommendation}</p>
+                </div>
+            `).join('') : `<p class="text-gray-400 text-center">No vulnerabilities found for the selected modules.</p>`;
+            
+            // NEW: Professional header for the PDF document
+            const reportHeader = `
+                <div class="text-center pb-6 mb-4 border-b border-gray-600">
+                    <h1 class="text-4xl font-extrabold text-accent-pink">NIQAT Al-Daef Security Scan Report</h1>
+                    <p class="text-gray-400 mt-2">Generated for: <span class="font-mono text-accent-cyan break-all">${data.targetUrl}</span> on ${data.timestamp}</p>
+                </div>
+            `;
+
+            return `
+                ${reportHeader}
+                <div class="report-summary pb-4 border-b border-gray-700">
+                    <div class="p-4 rounded-lg flex flex-col sm:flex-row justify-between items-center ${statusColor(data.overallSeverity)} shadow-md space-y-2 sm:space-y-0">
+                        <p class="text-lg font-bold">Overall Status: ${data.overallStatus}</p>
+                        <p class="text-lg font-bold">Severity: ${data.overallSeverity}</p>
+                        <p class="text-lg font-bold">Total Vulnerabilities: ${data.totalVulnerabilities}</p>
+                    </div>
+                </div>
+
+                <h2 class="text-2xl font-bold text-accent-pink mt-6 mb-4">Detailed Findings</h2>
+                <div id="detailed-results">
+                    ${resultsHtml}
+                </div>
+            `;
+        };
 
         /**
-         * Main function to render the application based on state.
+         * Main UI Renderer: Chooses which page to display.
          */
         function renderApp() {
-            const appContent = document.getElementById('app-content');
+            const appDiv = document.getElementById('app');
             let content = '';
 
-            switch (appState.currentPage) {
-                case 'input':
-                    content = renderInput();
-                    break;
-                case 'scanning':
-                    content = renderScanning();
-                    break;
-                case 'results':
-                    content = renderResults();
-                    break;
-                default:
-                    content = renderInput();
+            // Loading screen while auth is setting up
+            if (!state.authReady) {
+                 appDiv.innerHTML = `
+                    <div class="text-center mt-20">
+                        <h1 class="text-4xl font-extrabold text-accent-cyan animate-pulse">NIQAT Al-Daef</h1>
+                        <p class="text-gray-400 mt-4">Securing connection and preparing environment...</p>
+                    </div>
+                `;
+                return;
             }
 
-            appContent.innerHTML = content;
-        }
+            // Status badge for URL input
+            const urlBadge = (status) => {
+                switch (status) {
+                    case 'valid': return '<span class="px-3 py-1 bg-green-500 text-white rounded-full text-sm font-semibold">Valid</span>';
+                    case 'invalid': return '<span class="px-3 py-1 bg-red-500 text-white rounded-full text-sm font-semibold">Invalid URL</span>';
+                    default: return '';
+                }
+            };
 
-        // Initialize the app on page load
-        document.addEventListener('DOMContentLoaded', renderApp);
+            // Style for module toggles
+            const toggleStyle = (isEnabled) => isEnabled
+                ? 'bg-accent-purple text-white'
+                : 'bg-primary-dark text-gray-400 border border-gray-700 hover:bg-gray-800';
 
-        // Expose functions to the global scope for event handlers
+            // Top Navigation (visible on scan/report pages)
+            const topNav = state.isLoggedIn && (state.currentPage !== 'login' && state.currentPage !== 'register') ? `
+                <div class="fixed top-4 right-4 flex items-center space-x-3 text-sm z-10">
+                    <span class="text-gray-400 hidden sm:inline">User ID: <span class="font-mono text-accent-cyan">${state.userId ? state.userId.slice(0, 8) : ''}...</span></span>
+                    <span class="px-2 py-1 text-xs font-semibold rounded-full ${state.authMode === 'guest' ? 'bg-yellow-600' : 'bg-green-600'}">${state.authMode.toUpperCase()}</span>
+                    <button onclick="handleLogout()" class="px-3 py-1 bg-gray-700 text-white rounded-full hover:bg-gray-600 transition">
+                        Logout
+                    </button>
+                </div>
+            ` : '';
+
+            switch (state.currentPage) {
+                case 'login':
+                    content = renderAuthForm(true);
+                    break;
+                case 'register':
+                    content = renderAuthForm(false);
+                    break;
+                case 'start':
+                    content = `
+                        ${topNav}
+                        <div class="max-w-xl mx-auto bg-bg-card p-8 rounded-2xl shadow-2xl border border-accent-cyan/20 transform hover:scale-[1.01] transition duration-500">
+                            <h1 class="text-4xl font-extrabold text-center text-accent-cyan mb-2">NIQAT Al-Daef</h1>
+                            <p class="text-center text-gray-400 mb-8">Web Security Scanning Tool</p>
+
+                            <div class="space-y-6">
+                                <label for="url-input" class="block text-lg font-medium text-gray-300">Target URL</label>
+                                <div class="relative flex items-center">
+                                    <input type="url" id="url-input" placeholder="e.g., https://example.com"
+                                           value="${state.url}" oninput="validateUrl(event.target.value)"
+                                           class="w-full p-4 pr-28 bg-primary-dark border-2 ${state.urlStatus === 'invalid' ? 'border-red-500' : 'border-accent-purple'} rounded-full text-white placeholder-gray-500 focus:ring-accent-cyan focus:border-accent-cyan transition duration-300">
+                                    <div class="absolute right-3">
+                                        ${urlBadge(state.urlStatus)}
+                                    </div>
+                                </div>
+                                <p class="text-sm text-gray-500 mt-2">Enter the full URL, including 'http://' or 'https://'.</p>
+                            </div>
+
+                            <button onclick="navigateTo('configure')" ${!state.isUrlValidated ? 'disabled' : ''}
+                                class="mt-8 w-full py-4 text-xl font-bold rounded-full shadow-xl transition duration-300
+                                ${state.isUrlValidated
+                                    ? 'bg-accent-pink hover:bg-opacity-90 text-white transform hover:scale-105 focus:ring-4 focus:ring-accent-pink focus:ring-opacity-50'
+                                    : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                                }">
+                                Configure Scan
+                            </button>
+                        </div>
+                    `;
+                    break;
+
+                case 'configure':
+                    content = `
+                        ${topNav}
+                        <div class="max-w-2xl mx-auto bg-bg-card p-8 rounded-2xl shadow-2xl border border-accent-cyan/20">
+                            <h2 class="text-3xl font-bold text-accent-cyan mb-2">Scan Configuration</h2>
+                            <p class="text-gray-400 mb-6">Target: <span class="font-mono text-accent-pink break-all">${state.url}</span></p>
+
+                            <h3 class="text-2xl font-semibold text-gray-200 mb-4 border-b border-accent-purple pb-2">Select Modules</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                ${Object.keys(state.scanModules).map(key => `
+                                    <button onclick="toggleModule('${key}')"
+                                            class="p-4 rounded-xl text-left transition duration-200 flex items-center justify-between ${toggleStyle(state.scanModules[key])}">
+                                        <span class="font-medium">${moduleDisplayNames[key] || key}</span>
+                                        ${state.scanModules[key]
+                                            ? '<svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>'
+                                            : '<svg class="w-6 h-6 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>'
+                                        }
+                                    </button>
+                                `).join('')}
+                            </div>
+
+                            <div class="mt-8 flex justify-between space-x-4">
+                                <button onclick="navigateTo('start')"
+                                    class="w-1/3 py-3 bg-gray-600 text-white font-semibold rounded-full shadow-lg hover:bg-gray-500 transition duration-300">
+                                    &larr; Back
+                                </button>
+                                <button onclick="startScan()"
+                                    class="w-2/3 py-3 bg-accent-pink text-white font-bold rounded-full shadow-xl hover:bg-opacity-90 transition duration-300 transform hover:scale-[1.02] focus:ring-4 focus:ring-accent-pink focus:ring-opacity-50">
+                                    Start Scan
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    break;
+
+                case 'scanning':
+                    const progressStyle = `width: ${state.scanProgress}%`;
+                    content = `
+                        ${topNav}
+                        <div class="max-w-3xl mx-auto bg-bg-card p-8 rounded-2xl shadow-2xl border border-accent-cyan/20">
+                            <h2 class="text-3xl font-bold text-accent-cyan mb-2 text-center">Scanning in Progress...</h2>
+                            <p class="text-center text-gray-400 mb-6">Target: <span class="font-mono text-accent-pink break-all">${state.url}</span></p>
+
+                            <!-- Progress Bar -->
+                            <div class="w-full bg-primary-dark rounded-full h-4 mb-6 shadow-inner">
+                                <div class="h-4 rounded-full bg-gradient-to-r from-accent-cyan to-accent-purple transition-all duration-1000" style="${progressStyle}"></div>
+                            </div>
+                            <p class="text-xl font-bold text-center text-accent-pink mb-6">${state.scanProgress}% Complete</p>
+
+                            <!-- Scan Log -->
+                            <div class="h-64 bg-primary-dark p-4 rounded-xl overflow-y-auto text-sm" id="scan-log">
+                                ${state.scanLog.map(log => {
+                                    let color = 'text-gray-300';
+                                    if (log.type === 'error') color = 'text-red-400';
+                                    if (log.type === 'success') color = 'text-green-400';
+                                    if (log.type === 'module') color = 'text-accent-cyan font-bold';
+                                    return `<p class="${color}">[${log.time}] ${log.text}</p>`;
+                                }).join('')}
+                            </div>
+                            ${state.scanLog.length >= state.maxLogLines ? '<p class="text-center text-sm text-gray-500 mt-2">Displaying last ' + state.maxLogLines + ' log lines.</p>' : ''}
+                        </div>
+                    `;
+                    break;
+
+                case 'report':
+                    if (state.reportData) {
+                        // Logic to conditionally show the download button or a message
+                        const downloadButton = `
+                            <button onclick="downloadReportPdf()"
+                                class="flex items-center justify-center px-6 py-3 bg-accent-purple text-white font-semibold rounded-full shadow-lg hover:bg-opacity-90 transition duration-300 transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-accent-purple focus:ring-opacity-50">
+                                <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L10 11.586l1.293-1.293a1 1 0 111.414 1.414l-2 2a1 1 0 01-1.414 0l-2-2a1 1 0 010-1.414z" clip-rule="evenodd"></path><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v7a1 1 0 11-2 0V4a1 1 0 011-1z" clip-rule="evenodd"></path></svg>
+                                Download Report (PDF)
+                            </button>
+                        `;
+
+                        const registerToDownload = `
+                            <div class="text-center px-6 py-3 bg-yellow-800/20 text-yellow-300 font-semibold rounded-full border border-yellow-700">
+                                <a href="#" onclick="event.preventDefault(); navigateTo('register');">Register a free account</a> to download reports.
+                            </div>
+                        `;
+
+                        content = `
+                            ${topNav}
+                            <div class="max-w-4xl mx-auto p-4 sm:p-6 lg:p-8">
+                                <h1 class="text-3xl font-bold text-accent-cyan mb-6 text-center">Scan Complete: Report Overview</h1>
+
+                                <!-- Report Content Section (The target for PDF generation) -->
+                                <div id="report-content-container" class="bg-bg-card p-6 rounded-xl shadow-2xl space-y-4 mb-8">
+                                    ${generateReportView(state.reportData)}
+                                </div>
+
+                                <!-- Download Button Section (Now placed below the report content) -->
+                                <div class="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-4 report-actions-container">
+                                    
+                                    <!-- CONDITIONAL BUTTON: Check authMode -->
+                                    ${state.authMode === 'user' ? downloadButton : registerToDownload}
+
+                                    <button onclick="navigateTo('start')"
+                                        class="flex items-center justify-center px-6 py-3 bg-gray-600 text-white font-semibold rounded-full shadow-lg hover:bg-gray-500 transition duration-300 transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-gray-600 focus:ring-opacity-50">
+                                        Start New Scan
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        content = `
+                            ${topNav}
+                            <div class="max-w-md mx-auto bg-bg-card p-8 rounded-2xl shadow-2xl text-center">
+                                <p class="text-red-400 text-xl">Error: No report data found.</p>
+                                <button onclick="navigateTo('start')" class="mt-6 py-2 px-4 bg-accent-pink text-white rounded-full">Start New Scan</button>
+                            </div>
+                        `;
+                    }
+                    break;
+            }
+
+            appDiv.innerHTML = content;
+
+            // Scroll log to bottom on update if on scanning page
+            if (state.currentPage === 'scanning') {
+                const logDiv = document.getElementById('scan-log');
+                if (logDiv) {
+                    logDiv.scrollTop = logDiv.scrollHeight;
+                }
+            }
+        };
+
+        // --- Event Handlers & Initializers ---
+
+        function validateUrl(url) {
+            const urlRegex = /^(https?|ftp):\/\/[^\s/$.?#].[^\s]*$/i;
+            const isValidFormat = urlRegex.test(url);
+
+            setState({ url: url });
+
+            if (isValidFormat) {
+                setState({ urlStatus: 'valid', isUrlValidated: true });
+            } else if (url.length === 0) {
+                setState({ urlStatus: 'idle', isUrlValidated: false });
+            } else {
+                setState({ urlStatus: 'invalid', isUrlValidated: false });
+            }
+        };
+
+        function toggleModule(moduleKey) {
+            setState({
+                scanModules: {
+                    ...state.scanModules,
+                    [moduleKey]: !state.scanModules[moduleKey],
+                }
+            });
+        };
+
+        function startScan() {
+            if (!state.isScanning) {
+                if (Object.values(state.scanModules).some(v => v)) {
+                    setState({
+                        isScanning: true,
+                        scanLog: [],
+                        scanProgress: 0,
+                        reportData: null,
+                        currentPage: 'scanning',
+                    });
+                    setTimeout(simulateScan, 500);
+                } else {
+                    showMessageBox("Module Selection", "Please select at least one scan module before starting the scan.");
+                }
+            }
+        };
+
+        // Expose functions to global window object for inline event handlers
+        // This is still needed because they are defined inside a script, not globally by default
+        // But now we are assigning hoisted, standard functions.
+        window.validateUrl = validateUrl;
+        window.toggleModule = toggleModule;
         window.startScan = startScan;
         window.downloadReportPdf = downloadReportPdf;
-        window.showMessageBox = showMessageBox;
-        window.hideMessageBox = hideMessageBox;
+        window.navigateTo = navigateTo;
+        window.handleLogin = handleLogin;
+        window.handleRegister = handleRegister;
+        window.handleGuestLogin = handleGuestLogin;
+        window.handleLogout = handleLogout;
+
+
+        // Initial setup on load
+        document.addEventListener('DOMContentLoaded', () => {
+             // Wait for the window.firebase object to be available from the module script
+            const checkFirebase = setInterval(() => {
+                if (window.firebase) {
+                    clearInterval(checkFirebase);
+                    initializeFirebaseAndAuth();
+                }
+            }, 100);
+            renderApp(); // Render initial loading state
+        });
 
     </script>
 </body>
